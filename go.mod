@@ -1,4 +1,4 @@
-module github.com/zorosz/workflow-hardener-research
+module github.com/zorosz/workflow-hardener
 
 go 1.27.0
 

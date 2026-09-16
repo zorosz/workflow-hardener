@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorosz/workflow-hardener-research/internal/hardener"
+	"github.com/zorosz/workflow-hardener/internal/hardener"
 )
 
 // Exercise real process exit codes against synthetic workflow examples.

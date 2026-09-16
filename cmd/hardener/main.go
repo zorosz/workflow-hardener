@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/zorosz/workflow-hardener-research/internal/hardener"
+	"github.com/zorosz/workflow-hardener/internal/hardener"
 )
 
 func main() {
