@@ -1,0 +1,17 @@
+# Synthetic test input; never execute as a workflow.
+name: expression-whitespace-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Literal output
+        shell: bash
+        run: printf '%s\n' 'literal'
+      - name: Two whitespace variants in one step
+        shell: bash
+        run: |
+          printf '%s\n' "${{github.event.pull_request.title}}"
+          printf '%s\n' "${{   github.event.pull_request.title   }}"

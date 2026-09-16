@@ -1,0 +1,10 @@
+/bin/
+/out/
+/scratch/
+.env
+.env.*
+*.exe
+/.codex/auth.json
+/.codex/sessions/
+/.codex/log/
+/.codex/*.log

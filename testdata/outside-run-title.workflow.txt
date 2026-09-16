@@ -1,0 +1,15 @@
+# Synthetic test input; never execute as a workflow.
+# YAML comment containing ${{ github.event.pull_request.title }} is outside run.
+name: outside-run-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ${{ github.event.pull_request.title }}
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' 'literal'

@@ -1,0 +1,15 @@
+# Synthetic test input; never execute as a workflow.
+name: partial-analysis-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Supported title interpolation
+        shell: bash
+        run: printf '%s\n' "${{ github.event.pull_request.title }}"
+      - name: Unmodeled shell
+        shell: pwsh
+        run: Write-Output "${{ github.event.pull_request.title }}"

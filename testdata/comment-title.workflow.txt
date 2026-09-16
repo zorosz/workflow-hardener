@@ -1,0 +1,14 @@
+# Synthetic test input; never execute as a workflow.
+name: script-comment-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title inside script comment
+        shell: bash
+        run: |
+          # Title: ${{ github.event.pull_request.title }}
+          printf '%s\n' 'literal'

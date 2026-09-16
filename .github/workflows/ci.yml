@@ -1,0 +1,67 @@
+name: Scanner CI
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scanner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -o bin/hardener ./cmd/hardener
+
+      - name: Demonstrate three scan results
+        shell: bash
+        run: |
+          mkdir -p out/demo
+          files=(risky-title env-title default-shell-title)
+          expected=(1 0 2)
+          statuses=(match no_match unsupported)
+          findings=(1 0 0)
+          printf '## Scanner demo\n\n| Example | Result | Findings | Exit |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          for i in 0 1 2; do
+            file="testdata/${files[$i]}.workflow.txt"
+            report="out/demo/${files[$i]}.json"
+            if ./bin/hardener scan --file "$file" > "$report"; then
+              actual=0
+            else
+              actual=$?
+            fi
+            cat "$report"
+            if [ "$actual" -ne "${expected[$i]}" ]; then
+              echo "Unexpected exit $actual for $file; expected ${expected[$i]}" >&2
+              exit 1
+            fi
+            jq -e --arg status "${statuses[$i]}" --argjson code "$actual" --argjson count "${findings[$i]}" \
+              '.exit_code == $code and (.files | length) == 1 and .files[0].status == $status and .totals.findings == $count' "$report"
+            jq -r '"| \(.files[0].path) | \(.files[0].status) | \(.totals.findings) | \(.exit_code) |"' "$report" >> "$GITHUB_STEP_SUMMARY"
+          done
+          printf '\n`no_match` covers this rule only. `unsupported` means analysis is incomplete; the inherited-shell example intentionally returns exit 2.\n' >> "$GITHUB_STEP_SUMMARY"

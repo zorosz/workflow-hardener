@@ -1,0 +1,3 @@
+# Synthetic test input; never execute as a workflow.
+# This is not a scored rule-label example.
+jobs: [

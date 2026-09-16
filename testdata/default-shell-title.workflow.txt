@@ -1,0 +1,14 @@
+# Synthetic test input; never execute as a workflow.
+name: inherited-shell-fixture
+'on': pull_request
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Title without step-level shell
+        run: printf '%s\n' "${{ github.event.pull_request.title }}"
