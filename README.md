@@ -178,3 +178,7 @@ Exit **0** means supported analysis completed without a finding. Exit **1** mean
 Tests live beside their code in `_test.go` files. CI runs `go test ./...`, `go vet ./...`, and `go build`; the integration test checks actual process exit codes and rule IDs against all twenty-one examples.
 
 Repository tests simulate GitHub HTTP responses without live network requests. They cover commit pinning, source locations, both rules, shell and expression coverage matching local scans, filename validation, redirects, rate limits, byte and file limits, partial failures, cancellation, and CLI reporting.
+
+### Session review in Codex
+
+While working in this repository with Codex, invoke `$session-review` for a short assessment of progress, the main uncertainty, a possible blind spot, and the next useful check. The [session-review skill](.agents/skills/session-review/SKILL.md) runs only when explicitly invoked and provides review and recommendations.
