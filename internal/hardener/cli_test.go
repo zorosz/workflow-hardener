@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,28 @@ func TestCLIOutputFailure(t *testing.T) {
 	put(t, dir, "literal.workflow.txt", []byte(simpleWorkflow))
 	if got := Run([]string{"scan", "--root", dir, "--file", "literal.workflow.txt"}, failingWriter{}, io.Discard); got != 2 {
 		t.Fatalf("stdout failure exit %d", got)
+	}
+}
+
+func TestCLIReportRuleIDs(t *testing.T) {
+	_, dir := testInputs(t)
+	put(t, dir, "body.workflow.txt", []byte(strings.Replace(simpleWorkflow, "echo literal", "echo ${{ github.event.pull_request.body }}", 1)))
+	var stdout, stderr bytes.Buffer
+	if got := Run([]string{"scan", "--root", dir, "--file", "body.workflow.txt"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("body scan exit %d; stderr=%s", got, stderr.String())
+	}
+	var report map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := report["rule_id"]; exists {
+		t.Fatal("report still claims to cover a single rule")
+	}
+	var ruleIDs []string
+	if err := json.Unmarshal(report["rule_ids"], &ruleIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ruleIDs, []string{"WH-R001", "WH-R002"}) {
+		t.Fatalf("incorrect report rule IDs: %v", ruleIDs)
 	}
 }

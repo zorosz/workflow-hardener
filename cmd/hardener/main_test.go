@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -62,22 +63,26 @@ func TestCompiledCLI(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name     string
-		file     string
-		want     int
-		status   hardener.Status
-		findings int
+		name    string
+		file    string
+		want    int
+		status  hardener.Status
+		ruleIDs []string
 	}{
-		{"direct match", "risky-title", 1, hardener.Match, 1},
-		{"environment variable", "env-title", 0, hardener.NoMatch, 0},
-		{"whitespace and repeats", "whitespace-title", 1, hardener.Match, 1},
-		{"outside run", "outside-run-title", 0, hardener.NoMatch, 0},
-		{"unsupported shell", "pwsh-title", 2, hardener.Unsupported, 0},
-		{"shell default", "default-shell-title", 2, hardener.Unsupported, 0},
-		{"script comment", "comment-title", 1, hardener.Match, 1},
-		{"wrapped expression", "wrapped-title", 2, hardener.Unsupported, 0},
-		{"partial finding", "mixed-support-title", 2, hardener.Unsupported, 1},
-		{"parser failure", "invalid-yaml", 2, hardener.Error, 0},
+		{"direct match", "risky-title", 1, hardener.Match, []string{"WH-R001"}},
+		{"environment variable", "env-title", 0, hardener.NoMatch, nil},
+		{"whitespace and repeats", "whitespace-title", 1, hardener.Match, []string{"WH-R001"}},
+		{"outside run", "outside-run-title", 0, hardener.NoMatch, nil},
+		{"unsupported shell", "pwsh-title", 2, hardener.Unsupported, nil},
+		{"shell default", "default-shell-title", 2, hardener.Unsupported, nil},
+		{"script comment", "comment-title", 1, hardener.Match, []string{"WH-R001"}},
+		{"wrapped expression", "wrapped-title", 2, hardener.Unsupported, nil},
+		{"partial finding", "mixed-support-title", 2, hardener.Unsupported, []string{"WH-R001"}},
+		{"parser failure", "invalid-yaml", 2, hardener.Error, nil},
+		{"direct body", "risky-body", 1, hardener.Match, []string{"WH-R002"}},
+		{"body environment variable", "env-body", 0, hardener.NoMatch, nil},
+		{"title and body in one step", "mixed-title-body", 1, hardener.Match, []string{"WH-R001", "WH-R002"}},
+		{"partial body finding", "mixed-support-body", 2, hardener.Unsupported, []string{"WH-R002"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := run(t, tc.want, "scan", "--root", root, "--file", "testdata/"+tc.file+".workflow.txt")
@@ -86,8 +91,18 @@ func TestCompiledCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			if report.ExitCode != tc.want || len(report.Files) != 1 ||
-				report.Files[0].Status != tc.status || len(report.Files[0].Findings) != tc.findings {
+				report.Files[0].Status != tc.status || len(report.Files[0].Findings) != len(tc.ruleIDs) ||
+				report.Totals.Findings != len(tc.ruleIDs) || !reflect.DeepEqual(report.RuleIDs, []string{"WH-R001", "WH-R002"}) {
 				t.Fatalf("unexpected compiled result: %+v", report)
+			}
+			for i, ruleID := range tc.ruleIDs {
+				if report.Files[0].Findings[i].RuleID != ruleID {
+					t.Fatalf("finding %d has wrong rule: %+v", i, report.Files[0].Findings[i])
+				}
+			}
+			if tc.file == "mixed-title-body" && (report.Totals.AnalyzedSteps != 1 ||
+				len(report.Files[0].Findings[1].Evidence) != 2) {
+				t.Fatalf("mixed step or repeated body counted incorrectly: %+v", report)
 			}
 		})
 	}

@@ -1,11 +1,12 @@
 package hardener
 
 const (
-	RuleID       = "WH-R001"
-	MaxFiles     = 50
-	MaxFileBytes = 256 * 1024
-	MaxTextBytes = 512
-	RuleScope    = "Explicit step-level shell: bash; direct github.event.pull_request.title expressions with surrounding ASCII spaces, tabs, CRs, or LFs only. Any other or incomplete expression, missing/other shell, reusable-workflow job, or no run steps is unsupported. Conditions, shell interpretation, and data flow are not evaluated."
+	PRTitleRuleID = "WH-R001"
+	PRBodyRuleID  = "WH-R002"
+	MaxFiles      = 50
+	MaxFileBytes  = 256 * 1024
+	MaxTextBytes  = 512
+	ScanScope     = "Explicit step-level shell: bash; direct github.event.pull_request.title (WH-R001) and github.event.pull_request.body (WH-R002) expressions with surrounding ASCII spaces, tabs, CRs, or LFs only. Any other or incomplete expression, missing/other shell, reusable-workflow job, or no run steps is unsupported. Conditions, shell interpretation, and data flow are not evaluated."
 )
 
 type Status string

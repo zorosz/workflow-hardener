@@ -61,3 +61,37 @@ func TestScanStableOrder(t *testing.T) {
 		t.Fatal("scan order is unstable or mutated the caller's file list")
 	}
 }
+
+func TestScanBothRulesPreserveFindingsWithIncompleteAnalysis(t *testing.T) {
+	in, dir := testInputs(t)
+	data := `jobs:
+  inspect:
+    steps:
+      - shell: bash
+        run: echo ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
+      - shell: bash
+        run: echo ${{ github.event.pull_request.body }} ${{ github.workspace }}
+      - shell: bash
+        run: echo literal
+`
+	put(t, dir, "mixed.workflow.txt", []byte(data))
+	report, err := Scan(in, []string{"mixed.workflow.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExitCode != 2 || len(report.Files) != 1 ||
+		report.Totals != (Totals{Files: 1, ParsedFiles: 1, RunSteps: 3, AnalyzedSteps: 2, UnsupportedFiles: 1, Findings: 2}) {
+		t.Fatalf("incomplete analysis hid findings or double-counted steps: %+v", report)
+	}
+	f := report.Files[0]
+	if f.Status != Unsupported || len(f.Findings) != 2 || len(f.Issues) != 1 ||
+		f.Issues[0].Code != "unsupported_expression" || f.Issues[0].StepIndex == nil || *f.Issues[0].StepIndex != 1 {
+		t.Fatalf("incorrect mixed result: %+v", f)
+	}
+	for i, ruleID := range []string{"WH-R001", "WH-R002"} {
+		if f.Findings[i].RuleID != ruleID || f.Findings[i].StepIndex != 0 ||
+			f.Findings[i].Location != (Location{Kind: "run_scalar_start", Line: 5, Column: 14}) {
+			t.Fatalf("finding %d lost its attribution: %+v", i, f.Findings[i])
+		}
+	}
+}

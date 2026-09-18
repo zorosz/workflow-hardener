@@ -23,7 +23,7 @@ func scanFile(in *Inputs, name string) FileResult {
 	result.Parsed = true
 	result.RunSteps = len(w.Steps)
 	result.OutsideSteps = w.OutsideSteps
-	analysis := AnalyzePRTitle(w)
+	analysis := AnalyzePRText(w)
 	result.AnalyzedSteps = analysis.AnalyzedSteps
 	for _, f := range analysis.Findings {
 		f.Message = bounded(f.Message, MaxTextBytes)
@@ -48,7 +48,7 @@ func scanFile(in *Inputs, name string) FileResult {
 }
 
 type ScanReport struct {
-	RuleID   string       `json:"rule_id"`
+	RuleIDs  []string     `json:"rule_ids"`
 	Scope    string       `json:"scope"`
 	ExitCode int          `json:"exit_code"`
 	Totals   Totals       `json:"totals"`
@@ -58,7 +58,7 @@ type ScanReport struct {
 // Scan processes explicit files in a stable order. Incomplete analysis takes
 // precedence over a finding in the exit code, while all findings are retained.
 func Scan(in *Inputs, names []string) (ScanReport, error) {
-	report := ScanReport{RuleID: RuleID, Scope: RuleScope, Files: []FileResult{}}
+	report := ScanReport{RuleIDs: []string{PRTitleRuleID, PRBodyRuleID}, Scope: ScanScope, Files: []FileResult{}}
 	if len(names) == 0 || len(names) > MaxFiles {
 		return report, fmt.Errorf("scan requires 1-%d explicit files", MaxFiles)
 	}

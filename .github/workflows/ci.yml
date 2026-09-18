@@ -38,16 +38,16 @@ jobs:
       - name: Build
         run: go build -o bin/hardener ./cmd/hardener
 
-      - name: Demonstrate three scan results
+      - name: Demonstrate both rules and coverage results
         shell: bash
         run: |
           mkdir -p out/demo
-          files=(risky-title env-title default-shell-title)
-          expected=(1 0 2)
-          statuses=(match no_match unsupported)
-          findings=(1 0 0)
+          files=(risky-title env-title default-shell-title risky-body env-body mixed-title-body)
+          expected=(1 0 2 1 0 1)
+          statuses=(match no_match unsupported match no_match match)
+          findings=(1 0 0 1 0 2)
           printf '## Scanner demo\n\n| Example | Result | Findings | Exit |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
-          for i in 0 1 2; do
+          for i in "${!files[@]}"; do
             file="testdata/${files[$i]}.workflow.txt"
             report="out/demo/${files[$i]}.json"
             if ./bin/hardener scan --file "$file" > "$report"; then
@@ -61,7 +61,7 @@ jobs:
               exit 1
             fi
             jq -e --arg status "${statuses[$i]}" --argjson code "$actual" --argjson count "${findings[$i]}" \
-              '.exit_code == $code and (.files | length) == 1 and .files[0].status == $status and .totals.findings == $count' "$report"
+              '.rule_ids == ["WH-R001", "WH-R002"] and .exit_code == $code and (.files | length) == 1 and .files[0].status == $status and .totals.findings == $count' "$report"
             jq -r '"| \(.files[0].path) | \(.files[0].status) | \(.totals.findings) | \(.exit_code) |"' "$report" >> "$GITHUB_STEP_SUMMARY"
           done
-          printf '\n`no_match` covers this rule only. `unsupported` means analysis is incomplete; the inherited-shell example intentionally returns exit 2.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '\n`no_match` covers these two rules only. `unsupported` means analysis is incomplete; the inherited-shell example intentionally returns exit 2.\n' >> "$GITHUB_STEP_SUMMARY"
