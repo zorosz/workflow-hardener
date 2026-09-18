@@ -37,6 +37,11 @@ func testPRTextExpressionBoundary(t *testing.T, field, ruleID, shell string) {
 	direct := "${{ " + property + " }}"
 	compact := "${{" + property + "}}"
 	multiline := "${{\t\r\n" + property + "\n\t}}"
+	fallback := "${{ " + property + " || 'fallback' }}"
+	last := "${{ '' || " + property + " }}"
+	middle := "${{ env.value || " + property + " || '' }}"
+	repeated := "${{" + property + "||" + property + "}}"
+	quotedDelimiters := "${{ 'It''s }} || ${{ literal' || " + property + " }}"
 	for _, tc := range []struct {
 		name      string
 		script    string
@@ -55,21 +60,37 @@ func testPRTextExpressionBoundary(t *testing.T, field, ruleID, shell string) {
 		{"trailing literal brace", direct + "}", true, []string{direct}},
 		{"bracket notation", "${{ github['event']['pull_request']['" + field + "'] }}", false, nil},
 		{"function", "${{ toJSON(" + property + ") }}", false, nil},
-		{"other field", "${{ github.workspace }}", false, nil},
-		{"other field after match", direct + "\n${{ github.workspace }}", false, nil},
-		{"other field before match", "${{ github.workspace }}\n" + direct, false, nil},
-		{"expression literal containing direct form", "${{ '" + direct + "' }}", false, nil},
+		{"other field", "${{ github.workspace }}", true, nil},
+		{"other field after match", direct + "\n${{ github.workspace }}", true, []string{direct}},
+		{"other field before match", "${{ github.workspace }}\n" + direct, true, []string{direct}},
+		{"expression literal containing direct form", "${{ '" + direct + "' }}", true, nil},
+		{"expression literal then real reference", "${{ '" + direct + "' }}" + direct, true, []string{direct}},
 		{"nested opener", "${{ " + direct + " }}", false, nil},
 		{"unterminated after match", direct + " ${{", false, nil},
 		{"missing closer", "${{ " + property + " }", false, nil},
 		{"empty expression", "${{ }}", false, nil},
 		{"wrong property case", "${{ github.event.pull_request." + strings.ToUpper(field[:1]) + field[1:] + " }}", false, nil},
+		{"wrong parent case", "${{ github.Event.pull_request." + field + " }}", false, nil},
+		{"wrong root case", "${{ GitHub.event.pull_request." + field + " }}", false, nil},
 		{"property whitespace", "${{ github.event. pull_request." + field + " }}", false, nil},
-		{"longer property", "${{ " + property + "_extra }}", false, nil},
-		{"suffix expression", "${{ " + property + " || 'fallback' }}", false, nil},
+		{"longer property", "${{ " + property + "_extra }}", true, nil},
+		{"fallback first", fallback, true, []string{fallback}},
+		{"fallback last", last, true, []string{last}},
+		{"fallback middle", middle, true, []string{middle}},
+		{"repeated operand", repeated, true, []string{repeated}},
+		{"repeated fallback expression", repeated + repeated, true, []string{repeated, repeated}},
+		{"quoted delimiters before reference", quotedDelimiters, true, []string{quotedDelimiters}},
 		{"nonbreaking space", "${{\u00a0" + property + " }}", false, nil},
 		{"vertical tab", "${{\v" + property + " }}", false, nil},
 		{"form feed suffix", "${{ " + property + "\f}}", false, nil},
+		{"missing first operand", "${{ || " + property + " }}", false, nil},
+		{"missing last operand", "${{ " + property + " || }}", false, nil},
+		{"unterminated alternative", "${{ " + property + " || 'broken }}", false, nil},
+		{"unknown alternative", "${{ " + property + " || unknown.value }}", false, nil},
+		{"function alternative", "${{ " + property + " || toJSON(github.event) }}", false, nil},
+		{"unsupported and", "${{ " + property + " && env.value }}", false, nil},
+		{"trailing reference", "${{ " + property + " env.value }}", false, nil},
+		{"trailing string", "${{ " + property + " '' }}", false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := prTextTestWorkflow(tc.script, shell, shell != defaultPOSIXShell)
@@ -160,7 +181,7 @@ func TestPRTextGroupsFindingsByStepAndRule(t *testing.T) {
 func TestPRTextUnknownExpressionInvalidatesBothRules(t *testing.T) {
 	title := "${{ github.event.pull_request.title }}"
 	body := "${{ github.event.pull_request.body }}"
-	unknown := "${{ github.workspace }}"
+	unknown := "${{ toJSON(github.workspace) }}"
 	for _, script := range []string{
 		unknown + title + body,
 		title + unknown + body,

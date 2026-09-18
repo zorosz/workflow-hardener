@@ -86,7 +86,10 @@ func TestCompiledCLI(t *testing.T) {
 		{"container body", "container-body", 1, hardener.Match, []string{"WH-R002"}},
 		{"runner default", "runner-default-title", 1, hardener.Match, []string{"WH-R001"}},
 		{"job shell override", "job-shell-body", 1, hardener.Match, []string{"WH-R002"}},
-		{"container with partial coverage", "mixed-container-body", 2, hardener.Unsupported, []string{"WH-R002"}},
+		{"container with context expressions", "mixed-container-body", 1, hardener.Match, []string{"WH-R002"}},
+		{"PR text alongside context references", "mixed-contexts", 1, hardener.Match, []string{"WH-R001", "WH-R002"}},
+		{"PR fallback alternatives", "pr-fallbacks", 1, hardener.Match, []string{"WH-R001", "WH-R002"}},
+		{"contexts and string literals", "context-literals", 0, hardener.NoMatch, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := run(t, tc.want, "scan", "--root", root, "--file", "testdata/"+tc.file+".workflow.txt")
@@ -104,19 +107,24 @@ func TestCompiledCLI(t *testing.T) {
 					t.Fatalf("finding %d has wrong rule: %+v", i, report.Files[0].Findings[i])
 				}
 			}
+			if tc.want < 2 && (len(report.Files[0].Issues) != 0 || report.Totals.AnalyzedSteps != report.Totals.RunSteps) {
+				t.Fatalf("complete result has a coverage gap: %+v", report)
+			}
 			if tc.file == "mixed-title-body" && (report.Totals.AnalyzedSteps != 1 ||
 				len(report.Files[0].Findings[1].Evidence) != 2) {
 				t.Fatalf("mixed step or repeated body counted incorrectly: %+v", report)
 			}
 			if tc.file == "mixed-container-body" {
 				f := report.Files[0]
-				if report.Totals != (hardener.Totals{Files: 1, ParsedFiles: 1, RunSteps: 7, AnalyzedSteps: 5, OutsideSteps: 2, UnsupportedFiles: 1, Findings: 1}) ||
-					len(f.Issues) != 2 || f.Findings[0].StepIndex != 6 || f.Findings[0].Location.Line != 24 {
+				if report.Totals != (hardener.Totals{Files: 1, ParsedFiles: 1, RunSteps: 7, AnalyzedSteps: 7, OutsideSteps: 2, Findings: 1}) ||
+					len(f.Issues) != 0 || f.Findings[0].StepIndex != 6 || f.Findings[0].Location.Line != 24 {
 					t.Fatalf("container coverage or finding attribution changed: %+v", report)
 				}
-				for i, index := range []int{1, 8} {
-					if f.Issues[i].Code != "unsupported_expression" || f.Issues[i].StepIndex == nil || *f.Issues[i].StepIndex != index {
-						t.Fatalf("unexpected container issue: %+v", f.Issues[i])
+			}
+			if tc.file == "pr-fallbacks" {
+				for _, f := range report.Files[0].Findings {
+					if report.Totals.AnalyzedSteps != 1 || f.StepIndex != 0 || f.Location.Line != 12 || len(f.Evidence) != 2 || f.Evidence[0] != f.Evidence[1] {
+						t.Fatalf("fallback evidence or location changed: %+v", f)
 					}
 				}
 			}

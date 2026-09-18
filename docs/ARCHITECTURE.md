@@ -14,7 +14,8 @@ flowchart TD
     READ --> PARSE[ParseWorkflow: extract steps]
     PARSE --> SHELL[resolveShell: select Bash/sh coverage]
     SHELL --> RULE[AnalyzePRText: detect title and body patterns]
-    RULE --> RESULT[FileResult: findings and coverage]
+    RULE --> EXPR[expressionParser: inspect references, strings, and alternatives]
+    EXPR --> RESULT[FileResult: findings and coverage]
     RESULT --> REPORT[Run: write JSON and return exit code]
 ```
 
@@ -30,6 +31,7 @@ flowchart TD
 | [`workflow.go`](../internal/hardener/workflow.go) | Walks YAML nodes to extract jobs, run steps, shells, and locations. | External packages, maps, slices, recursion |
 | [`shell.go`](../internal/hardener/shell.go) | Resolves step, job, and workflow shells, then supported runner/container defaults. | Pointers, presence checks, ordered selection, `switch` |
 | [`pr_text.go`](../internal/hardener/pr_text.go) | Checks the shell, recognizes direct title and body expressions, and groups evidence by rule within each step. | Loops, string operations, early returns |
+| [`expressions.go`](../internal/hardener/expressions.go) | Parses the supported expression subset, tracks PR references, and rejects unsupported syntax. | Cursor state, byte checks, methods, boolean results |
 | [`scan.go`](../internal/hardener/scan.go) | Connects reading, parsing, and detection; combines file results and exit codes. | Composition, sorting, `switch` |
 | [`report.go`](../internal/hardener/report.go) | Writes indented JSON and limits diagnostic text. | `encoding/json`, interfaces, UTF-8 strings |
 
@@ -43,12 +45,12 @@ For `hardener scan --file testdata/risky-title.workflow.txt`:
 2. `Scan` validates and sorts the requested filenames, then calls `scanFile` for each.
 3. `Inputs.Read` checks the path and size and reads the file. It never runs the script.
 4. `ParseWorkflow` extracts the `inspect` job's first step, its decoded `run` text, and the run value's source location. It calls `resolveShell`, which selects the explicit `bash` shell.
-5. `AnalyzePRText` calls `directPRTextExpressions` to check every expression in the step. It finds the exact title expression, returns one `WH-R001` finding, and records one analyzed step.
+5. `AnalyzePRText` calls `directPRTextExpressions` to check every expression in the step. That function passes each expression to `expressionParser.parse`, which recognizes the exact title reference. The detector returns one `WH-R001` finding and records one analyzed step.
 6. `scanFile` sets the status to `match`. `Scan` combines the totals, and `Run` writes JSON and returns exit 1.
 
 With [the environment-variable example](../testdata/env-title.workflow.txt), the expression is outside `run`, so the supported step produces no finding and exit 0.
 
-With [the direct-body example](../testdata/risky-body.workflow.txt), the same path produces a `WH-R002` finding. The shared expression check accepts only the exact title and body property names with surrounding ASCII spaces, tabs, CRs, or LFs. Unknown or incomplete expressions make the entire step unsupported for both rules.
+With [the direct-body example](../testdata/risky-body.workflow.txt), the same path produces a `WH-R002` finding. The shared expression parser also accepts other context references, single-quoted strings, and `||` alternatives. Unsupported or incomplete expressions make the entire step unsupported for both rules.
 
 With [the mixed title/body example](../testdata/mixed-title-body.workflow.txt), one step contains a title expression and two body expressions. The detector counts one analyzed step and emits two findings in rule-ID order: a title finding with one evidence entry and a body finding with two. A second matching step would produce its own findings with that step's location.
 
@@ -64,9 +66,21 @@ With [the inherited-shell example](../testdata/default-shell-title.workflow.txt)
 
 When no shell setting is present, the resolver uses the eight scalar Ubuntu/macOS runner labels listed in [the README](../README.md#shell-selection). Without a job container, it returns the internal `bash-or-sh` marker to represent Bash with a possible `sh` fallback. For an allowlisted Ubuntu runner with a literal container image, it returns `sh`. Other runner/container contexts remain unresolved. The internal marker is never accepted as a literal `shell` value.
 
-`Step.Shell` holds this resolved value or an empty string for unsupported cases. `Step.ShellExplicit` records whether the step declared a shell; it no longer determines coverage. `AnalyzePRText` accepts the three supported resolved values and then applies the unchanged expression check. The report's JSON fields and run-value source locations stay the same.
+`Step.Shell` holds this resolved value or an empty string for unsupported cases. `Step.ShellExplicit` records whether the step declared a shell; it no longer determines coverage. `AnalyzePRText` accepts the three supported resolved values and then checks expression coverage. The report's JSON fields and run-value source locations stay the same.
 
-[The mixed container example](../testdata/mixed-container-body.workflow.txt) has seven run steps. Shell resolution supports all seven, but two contain other expressions. The result keeps the explicit Bash step's body finding, counts five analyzed steps, reports two `unsupported_expression` issues, and returns exit 2. Resolving shells does not expand expression handling.
+[The mixed container example](../testdata/mixed-container-body.workflow.txt) has seven run steps. Shell resolution and expression parsing support all seven, including the branch fallbacks and synthetic secret reference. The result contains the explicit Bash step's body finding, seven analyzed steps, no issues, and exit 1. Recognizing a secret reference does not access its value.
+
+## Parse expressions
+
+`directPRTextExpressions` searches the decoded script for `${{`. For each opener, it creates an `expressionParser` with a cursor just after the opener. On success, the cursor is just after the closing `}}`, so the full original expression can be kept as evidence and scanning resumes from that position.
+
+`expressionParser.parse` reads a term, then either the closing delimiter or `||` followed by another term. A term is a dotted context reference or a single-quoted string. `reference` checks the context allowlist and property identifiers described in [the README](../README.md#supported-expressions). `quotedString` consumes literal text, including doubled apostrophes, so `}}`, `||`, and PR paths inside strings do not become syntax or findings. The cursor moves forward without recursion or evaluating any values.
+
+The parser records two booleans: whether any alternative references the exact PR title or body path. Every alternative is inspected, including those after a nonempty string literal. Case variants of the two PR paths remain unsupported. Other accepted references add no PR finding; this is not data-flow analysis or a safety assessment of their values.
+
+Each successful expression contributes at most one evidence entry to each rule. In [the PR-fallback example](../testdata/pr-fallbacks.workflow.txt), the body reference appears twice within one expression but contributes only one body evidence entry. Repeating the entire expression contributes a second entry. Findings are still grouped by step and ordered by rule ID.
+
+The parser must consume every expression completely. An unsupported function, unexpected token, or missing operand returns an unsupported result. `directPRTextExpressions` then discards any evidence collected for that step. In [the partial-body example](../testdata/mixed-support-body.workflow.txt), the supported first step keeps its finding, while the second step's `toJSON` expression produces `unsupported_expression` and exit 2.
 
 ## Follow a repository scan
 
@@ -95,9 +109,9 @@ The scan step captures JSON, stderr, and the process exit code. The following st
 Go's `_test.go` files stay next to the code and are excluded from the normal executable. Table-driven tests describe several inputs and expected outcomes using a slice and a loop.
 
 - Input and parser tests check file boundaries, malformed YAML, step extraction, and source locations. [`shell_test.go`](../internal/hardener/shell_test.go) covers shell precedence, container/platform defaults, blocked fallback, malformed defaults, and unresolved contexts.
-- Detector tests check both expression syntaxes, shell restrictions, repeated occurrences, mixed rules, step attribution, and unsupported cases.
+- Detector and expression tests check context references, strings containing delimiters, fallback alternatives, repeated evidence, mixed rules, step attribution, malformed/unsupported syntax, shell restrictions, and a long fallback chain.
 - Scanner and CLI tests check combined results, argument handling, and output errors.
-- [`github_test.go`](../internal/hardener/github_test.go) replaces the HTTP transport with simulated responses. It checks snapshot pinning, discovery, download bounds, links, redirects, rate limits, partial findings, and cancellation without live GitHub calls. Shell fixtures must produce the same findings, locations, and coverage in local and repository scans.
-- [`main_test.go`](../cmd/hardener/main_test.go) builds the real executable and checks the eighteen synthetic examples, rule IDs, and process exit codes. It does not execute workflow scripts.
+- [`github_test.go`](../internal/hardener/github_test.go) replaces the HTTP transport with simulated responses. It checks snapshot pinning, discovery, download bounds, links, redirects, rate limits, partial findings, and cancellation without live GitHub calls. Shell and expression fixtures must produce the same findings, locations, and coverage in local and repository scans.
+- [`main_test.go`](../cmd/hardener/main_test.go) builds the real executable and checks the twenty-one synthetic examples, rule IDs, and process exit codes. It does not execute workflow scripts.
 
 To understand the project incrementally, read `main.go` and `cli.go` first, follow the example above, then read the detector alongside its table-driven tests. The file checks and YAML validation can be studied after that central path is clear.

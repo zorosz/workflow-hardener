@@ -70,7 +70,7 @@ func TestScanBothRulesPreserveFindingsWithIncompleteAnalysis(t *testing.T) {
       - shell: bash
         run: echo ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
       - shell: bash
-        run: echo ${{ github.event.pull_request.body }} ${{ github.workspace }}
+        run: echo ${{ github.event.pull_request.body }} ${{ toJSON(github.workspace) }}
       - shell: bash
         run: echo literal
 `

@@ -6,7 +6,7 @@ const (
 	MaxFiles      = 50
 	MaxFileBytes  = 256 * 1024
 	MaxTextBytes  = 512
-	ScanScope     = "Bash/sh run steps selected by exact step, job, or workflow shell settings, or static defaults on allowlisted Ubuntu/macOS runners (sh in static Ubuntu job containers). Direct github.event.pull_request.title (WH-R001) and github.event.pull_request.body (WH-R002) expressions with surrounding ASCII spaces, tabs, CRs, or LFs only. Other/incomplete expressions, unresolved/other shells, reusable-workflow jobs, or no run steps are unsupported. Conditions, shell interpretation, and data flow are not evaluated."
+	ScanScope     = "Bash/sh run steps selected by exact step, job, or workflow shell settings, or static defaults on allowlisted Ubuntu/macOS runners (sh in static Ubuntu job containers). Supported expressions contain dotted references rooted at github, env, vars, secrets, inputs, steps, needs, matrix, runner, job, or strategy, single-quoted strings, and || alternatives, with ASCII spaces, tabs, CRs, or LFs between terms. Exact github.event.pull_request.title (WH-R001) and github.event.pull_request.body (WH-R002) references in any alternative are flagged; string contents and other references produce no PR findings. Case variants of PR paths, other/incomplete syntax, unresolved/other shells, reusable-workflow jobs, or no run steps are unsupported. Runtime values, conditions, shell interpretation, exploitability, and data flow are not evaluated."
 )
 
 type Status string

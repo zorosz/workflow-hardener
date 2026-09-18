@@ -160,7 +160,7 @@ func TestRepositoryAndLocalShellResolution(t *testing.T) {
 		{"container-body", PRBodyRuleID, 1, 1, 1, 12, 0},
 		{"runner-default-title", PRTitleRuleID, 1, 1, 1, 11, 0},
 		{"job-shell-body", PRBodyRuleID, 1, 1, 1, 17, 0},
-		{"mixed-container-body", PRBodyRuleID, 2, 7, 5, 24, 6},
+		{"mixed-container-body", PRBodyRuleID, 1, 7, 7, 24, 6},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("..", "..", "testdata", tc.fixture+".workflow.txt"))
@@ -195,19 +195,58 @@ func TestRepositoryAndLocalShellResolution(t *testing.T) {
 				finding.Location != (Location{Kind: "run_scalar_start", Line: tc.line, Column: 14}) {
 				t.Fatalf("finding lost attribution: %+v", finding)
 			}
-			if tc.exit == 1 {
-				if file.Status != Match || len(file.Issues) != 0 {
-					t.Fatalf("supported shell was rejected: %+v", file)
+			if file.Status != Match || len(file.Issues) != 0 {
+				t.Fatalf("supported shell or expression was rejected: %+v", file)
+			}
+		})
+	}
+}
+
+func TestRepositoryAndLocalExpressionCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		fixture               string
+		exit, steps, analyzed int
+		ruleIDs               []string
+	}{
+		{"mixed-contexts", 1, 2, 2, []string{PRTitleRuleID, PRBodyRuleID}},
+		{"pr-fallbacks", 1, 1, 1, []string{PRTitleRuleID, PRBodyRuleID}},
+		{"context-literals", 0, 1, 1, nil},
+		{"mixed-support-body", 2, 2, 1, []string{PRBodyRuleID}},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "testdata", tc.fixture+".workflow.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			const path = ".github/workflows/expressions.yml"
+			in, dir := testInputs(t)
+			put(t, dir, path, data)
+			local, err := Scan(in, []string{path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			replies := fakeSnapshot(t, blobEntry("expressions.yml", testBlob, string(data)))
+			replies[testPrefix+"/git/blobs/"+testBlob] = apiReply{status: 200, body: string(data)}
+			client, _ := fakeGitHub(t, replies)
+			remote := scanRepository(context.Background(), "owner/project", client)
+			local.Source = remote.Source
+			if !reflect.DeepEqual(local, remote) || remote.ExitCode != tc.exit || len(remote.Files) != 1 ||
+				remote.Totals.RunSteps != tc.steps || remote.Totals.AnalyzedSteps != tc.analyzed || remote.Totals.Findings != len(tc.ruleIDs) {
+				t.Fatalf("expression coverage differs or has unexpected totals: local=%+v remote=%+v", local, remote)
+			}
+			file := remote.Files[0]
+			for i, id := range tc.ruleIDs {
+				if file.Findings[i].RuleID != id || file.Findings[i].Path != path {
+					t.Fatalf("expression finding lost attribution: %+v", file.Findings[i])
 				}
-			} else {
-				if file.Status != Unsupported || len(file.Issues) != 2 || remote.Totals.OutsideSteps != 2 {
-					t.Fatalf("partial coverage was lost: %+v", file)
+			}
+			if tc.exit == 2 {
+				if file.Status != Unsupported || len(file.Issues) != 1 || file.Issues[0].Code != "unsupported_expression" ||
+					file.Issues[0].StepIndex == nil || *file.Issues[0].StepIndex != 1 || file.Findings[0].StepIndex != 0 {
+					t.Fatalf("partial analysis lost its finding or issue: %+v", file)
 				}
-				for i, index := range []int{1, 8} {
-					if file.Issues[i].Code != "unsupported_expression" || file.Issues[i].StepIndex == nil || *file.Issues[i].StepIndex != index {
-						t.Fatalf("unknown expression lost attribution: %+v", file.Issues[i])
-					}
-				}
+			} else if len(file.Issues) != 0 {
+				t.Fatalf("supported expression has a coverage issue: %+v", file)
 			}
 		})
 	}

@@ -31,7 +31,7 @@ func AnalyzePRText(w Workflow) Analysis {
 		if !supported {
 			result.Unsupported = append(result.Unsupported, Issue{
 				Kind: "coverage", Code: "unsupported_expression", JobID: step.JobID, StepIndex: &index,
-				Message: "Run script contains an expression outside the exact direct PR-title and PR-body forms; the entire step is unsupported for both rules.",
+				Message: "Run script contains an expression outside supported context references, single-quoted strings, and || alternatives, or an incomplete expression; the entire step is unsupported for both rules.",
 			})
 			continue
 		}
@@ -59,8 +59,8 @@ func AnalyzePRText(w Workflow) Analysis {
 	return result
 }
 
-// Every opener must begin one complete direct title or body expression. An
-// unmodeled expression invalidates the entire step for both rules.
+// Every opener must begin a complete supported expression. An unmodeled
+// expression invalidates the entire step for both rules, including earlier hits.
 func directPRTextExpressions(script string) (title, body []string, supported bool) {
 	const opener = "${{"
 	for offset := 0; offset < len(script); {
@@ -69,20 +69,17 @@ func directPRTextExpressions(script string) (title, body []string, supported boo
 			break
 		}
 		start := offset + relative
-		content := start + len(opener)
-		relativeEnd := strings.Index(script[content:], "}}")
-		if relativeEnd < 0 {
+		parser := expressionParser{text: script, pos: start + len(opener)}
+		hasTitle, hasBody, ok := parser.parse()
+		if !ok {
 			return nil, nil, false
 		}
-		end := content + relativeEnd
-		offset = end + 2
-		switch strings.Trim(script[content:end], " \t\r\n") {
-		case "github.event.pull_request.title":
+		offset = parser.pos
+		if hasTitle {
 			title = append(title, script[start:offset])
-		case "github.event.pull_request.body":
+		}
+		if hasBody {
 			body = append(body, script[start:offset])
-		default:
-			return nil, nil, false
 		}
 	}
 	return title, body, true

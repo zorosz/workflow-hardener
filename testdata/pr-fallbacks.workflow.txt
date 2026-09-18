@@ -1,0 +1,14 @@
+# Synthetic test input; never execute as a workflow.
+name: pr-fallbacks-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both PR fields in fallback alternatives
+        shell: bash
+        run: |
+          echo "${{ github.event.pull_request.title || github.event.pull_request.body || github.event.pull_request.body || '' }}"
+          echo "${{ github.event.pull_request.title || github.event.pull_request.body || github.event.pull_request.body || '' }}"

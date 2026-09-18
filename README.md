@@ -47,7 +47,7 @@ There is one command, `scan`, and two rules:
 
 The only application dependency is `go.yaml.in/yaml/v3`, which preserves YAML source locations. AI assisted development; the executable does not use a model. Local scans are offline; repository scans fetch public data from GitHub's API using Go's standard HTTP client.
 
-The JSON report lists both rules in `"rule_ids": ["WH-R001", "WH-R002"]`. This replaces the previous report-level `rule_id` field. Each finding still has its own `rule_id`. A matching step produces one finding per matching rule; repeated occurrences appear in that finding's `evidence` array. A step containing both expressions produces two findings and counts as one analyzed step.
+The JSON report lists both rules in `"rule_ids": ["WH-R001", "WH-R002"]`. This replaces the previous report-level `rule_id` field. Each finding still has its own `rule_id`. A matching step produces one finding per matching rule; separate matching expressions appear in that finding's `evidence` array. A step containing both PR references produces two findings and counts as one analyzed step.
 
 ## Demo
 
@@ -130,12 +130,33 @@ Runner inference accepts only scalar `runs-on` values `ubuntu-latest`, `ubuntu-2
 
 A step can inherit a workflow shell even when its job sets only `defaults.run.working-directory`. An empty, dynamic, or unsupported shell at the selected level blocks fallback. Explicit or inherited `bash`/`sh` settings do not require runner inference. These rules follow [GitHub's shell settings](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell) and [container defaults](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container).
 
-For example, [the container-body fixture](testdata/container-body.workflow.txt) omits the step shell, resolves to `sh`, and reports `WH-R002`. In [the mixed container fixture](testdata/mixed-container-body.workflow.txt), all seven run steps have supported shells, but two contain other expressions. Five steps are analyzed, one body finding is retained, and the scan returns exit 2 for incomplete expression coverage.
+For example, [the container-body fixture](testdata/container-body.workflow.txt) omits the step shell, resolves to `sh`, and reports `WH-R002`. In [the mixed container fixture](testdata/mixed-container-body.workflow.txt), all seven run steps have supported shells and expressions, including branch fallbacks and a synthetic secret reference. Seven steps are analyzed, one body finding is reported, and the scan returns exit 1. No secret values are read.
+
+## Supported expressions
+
+The shared detector accepts dotted context references and single-quoted strings, optionally joined by `||` alternatives. For example:
+
+```yaml
+- shell: bash
+  run: |
+    echo "${{ github.head_ref || github.ref_name }}"
+    echo "${{ github.event.pull_request.body || '' }}"
+```
+
+Both expressions are analyzed. The second produces `WH-R002`, so this step returns a finding with exit 1. Direct PR expressions can also share a step with other supported references, as shown in [the mixed-context example](testdata/mixed-contexts.workflow.txt).
+
+Supported references start with the exact lowercase context name `github`, `env`, `vars`, `secrets`, `inputs`, `steps`, `needs`, `matrix`, `runner`, `job`, or `strategy`, followed by one or more dot-separated properties. Each property starts with an ASCII letter or underscore and continues with ASCII letters, digits, underscores, or hyphens. No whitespace is allowed inside a reference; spaces, tabs, CRs, and LFs are allowed around terms and operators. The scanner recognizes syntax without resolving values or verifying runtime availability.
+
+Single-quoted strings support doubled apostrophes (`''`). Delimiters such as `}}` and operators inside a string are treated as text. A PR path written only inside such a string is not a reference and produces no finding. See GitHub's [expression syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions) and [context property notation](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts).
+
+Every `||` alternative is inspected without evaluating which one would be selected. [The PR-fallback example](testdata/pr-fallbacks.workflow.txt) produces both rules from the same expression. Each matching expression is recorded once per rule, even if it repeats that PR reference; separate occurrences of the expression retain separate evidence entries.
+
+Other supported context references produce no finding under these two PR rules. Their values are not assessed for shell safety, and PR text is not traced through variables or outputs. A scan returning exit 1 still marks the manual GitHub workflow as failed because it found a matching pattern.
 
 ## Scope and limitations
 
 - PowerShell, cmd, Python, custom shell commands, and unresolved shells are unsupported. Runner arrays/groups, matrix expressions, unknown runner labels, and dynamic container selection cannot establish a default shell. Reusable workflows remain unsupported.
-- The rules recognize `${{ github.event.pull_request.title }}` and `${{ github.event.pull_request.body }}` with optional surrounding spaces, tabs, or line breaks. Both can appear in the same step. Other or incomplete expressions make the entire step unsupported for both rules, with no findings from that step.
+- The rules recognize exact PR-title and PR-body references within the supported expression subset above. Functions, bracket notation, parentheses, wildcards, operators other than `||`, standalone context objects, unknown context roots, numeric/boolean/null literals, and case variants of the PR paths are unsupported. Unsupported or incomplete expressions make the entire step unsupported for both rules, with no findings from that step; findings from other supported steps remain available.
 - Expressions in `env`, step names, and other fields are outside the rules. Action `uses` steps are counted but their implementations are not inspected.
 - The rules inspect decoded script text, including shell comments. They do not evaluate conditions, shell behavior, exploitability, or data flow.
 - Findings identify the start of the YAML `run` value, using one-based lines and columns and a zero-based step index.
@@ -150,6 +171,6 @@ Exit **0** means supported analysis completed without a finding. Exit **1** mean
 - [`testdata/`](testdata/) contains small synthetic workflow examples stored as inert `.workflow.txt` files.
 - [The code walkthrough](docs/ARCHITECTURE.md) follows one input through the functions and explains the Go concepts involved.
 
-Tests live beside their code in `_test.go` files. CI runs `go test ./...`, `go vet ./...`, and `go build`; the integration test checks actual process exit codes and rule IDs against all eighteen examples.
+Tests live beside their code in `_test.go` files. CI runs `go test ./...`, `go vet ./...`, and `go build`; the integration test checks actual process exit codes and rule IDs against all twenty-one examples.
 
-Repository tests simulate GitHub HTTP responses without live network requests. They cover commit pinning, source locations, both rules, shell resolution matching local scans, filename validation, redirects, rate limits, byte and file limits, partial failures, cancellation, and CLI reporting.
+Repository tests simulate GitHub HTTP responses without live network requests. They cover commit pinning, source locations, both rules, shell and expression coverage matching local scans, filename validation, redirects, rate limits, byte and file limits, partial failures, cancellation, and CLI reporting.

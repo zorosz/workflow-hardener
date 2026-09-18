@@ -12,4 +12,4 @@ jobs:
         run: printf '%s\n' "${{ github.event.pull_request.body }}"
       - name: Body and an unmodeled expression
         shell: bash
-        run: printf '%s\n' "${{ github.event.pull_request.body }}" "${{ github.workspace }}"
+        run: printf '%s\n' "${{ github.event.pull_request.body }}" "${{ toJSON(github.workspace) }}"
