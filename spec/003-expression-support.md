@@ -90,4 +90,4 @@ None. The proposed syntax boundary is explicit; broader GitHub expression suppor
 - Added focused expression tests and three synthetic fixtures, bringing compiled CLI coverage to twenty-one examples. Updated the mixed-container expectations to seven analyzed steps, one body finding, and exit 1. Retained partial-coverage checks using unsupported function syntax and added local/repository parity checks.
 - Updated the README and code walkthrough to explain expression parsing, fallback findings, and remaining coverage limits.
 - Reviewed the source and test changes. `gofmt -l` reported no formatting differences, and whitespace checks found no issues.
-- Tests, vet, build, and the seven existing demos have not run for this change. GitHub CI validation is pending separately authorized commit/push. No project code or target scripts were executed locally.
+- [Scanner CI passed](https://github.com/zorosz/workflow-hardener/actions/runs/35329932444) for implementation commit `ae1a228`: tests (including all twenty-one compiled CLI examples), vet, build, and all seven demos. No project code or target scripts were executed locally.
