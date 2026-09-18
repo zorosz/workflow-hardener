@@ -1,0 +1,12 @@
+# Synthetic test input; never execute as a workflow.
+name: container-body-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    container: ubuntu
+    steps:
+      - name: Body with the container default shell
+        run: printf '%s\n' "${{ github.event.pull_request.body }}"

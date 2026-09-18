@@ -95,3 +95,28 @@ func TestScanBothRulesPreserveFindingsWithIncompleteAnalysis(t *testing.T) {
 		}
 	}
 }
+
+func TestResolvedShellEnvironmentValuesStayOutsideRun(t *testing.T) {
+	for _, jobFields := range []string{
+		"defaults: {run: {shell: sh}}",
+		"runs-on: ubuntu-latest",
+		"runs-on: ubuntu-latest\n    container: ubuntu",
+	} {
+		t.Run(jobFields, func(t *testing.T) {
+			data := "jobs:\n  inspect:\n    " + jobFields + `
+    steps:
+      - env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n' "$PR_TITLE" "$PR_BODY"
+`
+			in, dir := testInputs(t)
+			put(t, dir, "environment.workflow.txt", []byte(data))
+			report, err := Scan(in, []string{"environment.workflow.txt"})
+			if err != nil || report.ExitCode != 0 || len(report.Files) != 1 || report.Files[0].Status != NoMatch ||
+				report.Totals != (Totals{Files: 1, ParsedFiles: 1, RunSteps: 1, AnalyzedSteps: 1}) {
+				t.Fatalf("environment values became findings or unsupported: %+v, %v", report, err)
+			}
+		})
+	}
+}

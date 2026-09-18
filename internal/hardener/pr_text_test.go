@@ -23,12 +23,16 @@ func TestPRTextExpressionBoundary(t *testing.T) {
 		{"title", PRTitleRuleID}, {"body", PRBodyRuleID},
 	} {
 		t.Run(rule.field, func(t *testing.T) {
-			testPRTextExpressionBoundary(t, rule.field, rule.ruleID)
+			for _, shell := range []string{"bash", "sh", defaultPOSIXShell} {
+				t.Run(shell, func(t *testing.T) {
+					testPRTextExpressionBoundary(t, rule.field, rule.ruleID, shell)
+				})
+			}
 		})
 	}
 }
 
-func testPRTextExpressionBoundary(t *testing.T, field, ruleID string) {
+func testPRTextExpressionBoundary(t *testing.T, field, ruleID, shell string) {
 	property := "github.event.pull_request." + field
 	direct := "${{ " + property + " }}"
 	compact := "${{" + property + "}}"
@@ -68,7 +72,7 @@ func testPRTextExpressionBoundary(t *testing.T, field, ruleID string) {
 		{"form feed suffix", "${{ " + property + "\f}}", false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w := prTextTestWorkflow(tc.script, "bash", true)
+			w := prTextTestWorkflow(tc.script, shell, shell != defaultPOSIXShell)
 			a := AnalyzePRText(w)
 			if !tc.supported {
 				if len(a.Findings) != 0 || a.AnalyzedSteps != 0 || len(a.Unsupported) != 1 ||
@@ -98,14 +102,14 @@ func testPRTextExpressionBoundary(t *testing.T, field, ruleID string) {
 	}
 }
 
-func TestPRTextRequiresExactExplicitBash(t *testing.T) {
+func TestPRTextRequiresSupportedShell(t *testing.T) {
 	for _, tc := range []struct {
 		shell    string
 		explicit bool
 	}{
-		{"bash", false}, {"", false}, {"", true}, {"Bash", true},
+		{"", false}, {"", true}, {"Bash", true},
 		{"bash ", true}, {" bash", true}, {"bash {0}", true},
-		{"pwsh", true}, {"sh", true}, {"python", true},
+		{"pwsh", true}, {"sh {0}", true}, {"python", true},
 	} {
 		t.Run(fmt.Sprintf("%q-explicit-%v", tc.shell, tc.explicit), func(t *testing.T) {
 			for _, script := range []string{"literal", "${{ github.event.pull_request.title }}", "${{ github.event.pull_request.body }}"} {
@@ -113,7 +117,7 @@ func TestPRTextRequiresExactExplicitBash(t *testing.T) {
 				a := AnalyzePRText(w)
 				if len(a.Findings) != 0 || a.AnalyzedSteps != 0 || len(a.Unsupported) != 1 ||
 					a.Unsupported[0].Code != "unsupported_shell" || *a.Unsupported[0].StepIndex != 2 {
-					t.Fatalf("shell inferred or normalized: %+v", a)
+					t.Fatalf("unsupported shell was accepted: %+v", a)
 				}
 			}
 		})
@@ -148,7 +152,7 @@ func TestPRTextGroupsFindingsByStepAndRule(t *testing.T) {
 			t.Fatalf("finding %d lost its rule, step, or evidence order: %+v", i, f)
 		}
 	}
-	if a.Findings[1].Message != "Pull request body expression is inserted directly into a Bash run script; review possible script injection." {
+	if a.Findings[1].Message != "Pull request body expression is inserted directly into a Bash/sh run script; review possible script injection." {
 		t.Fatalf("body finding has the wrong explanation: %q", a.Findings[1].Message)
 	}
 }

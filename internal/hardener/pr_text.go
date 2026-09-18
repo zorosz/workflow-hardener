@@ -2,7 +2,7 @@ package hardener
 
 import "strings"
 
-// AnalyzePRText finds direct PR-title and PR-body expressions in explicit Bash run steps.
+// AnalyzePRText finds direct PR-title and PR-body expressions in resolved Bash/sh run steps.
 // Scripts and expressions are inspected as decoded text and never executed.
 func AnalyzePRText(w Workflow) Analysis {
 	result := Analysis{Findings: []Finding{}, Unsupported: []Issue{}}
@@ -20,10 +20,10 @@ func AnalyzePRText(w Workflow) Analysis {
 	}
 	for _, step := range w.Steps {
 		index := step.Index
-		if !step.ShellExplicit || step.Shell != "bash" {
+		if step.Shell != "bash" && step.Shell != "sh" && step.Shell != defaultPOSIXShell {
 			result.Unsupported = append(result.Unsupported, Issue{
 				Kind: "coverage", Code: "unsupported_shell", JobID: step.JobID, StepIndex: &index,
-				Message: "Run step does not explicitly declare shell: bash; shell inference is outside WH-R001 and WH-R002 coverage.",
+				Message: "Run step shell is unsupported or cannot be resolved to Bash/sh from static shell settings, runner, and container information.",
 			})
 			continue
 		}
@@ -51,7 +51,7 @@ func AnalyzePRText(w Workflow) Analysis {
 			result.Findings = append(result.Findings, Finding{
 				RuleID: match.ruleID, Path: w.Path, JobID: step.JobID, StepIndex: step.Index,
 				Location: step.Location,
-				Message:  "Pull request " + match.field + " expression is inserted directly into a Bash run script; review possible script injection.",
+				Message:  "Pull request " + match.field + " expression is inserted directly into a Bash/sh run script; review possible script injection.",
 				Evidence: match.evidence,
 			})
 		}

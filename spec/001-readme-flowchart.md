@@ -2,11 +2,9 @@
 
 Status: Implemented
 
-## Request and problem
+## Problem
 
-The owner asked to rotate the flowchart in `README.md` because it looks small in the UI. The current left-to-right layout spreads the stages across the available width, which can make the rendered labels small.
-
-The owner also requested this spec review process. Its setup is authorized by that request; the chart change is the first proposal to review before implementation.
+The left-to-right flowchart in `README.md` spreads the stages across the available width, which can make the rendered labels small. A top-to-bottom layout gives the labels more room and improves readability.
 
 ## Proposed change
 
@@ -49,8 +47,6 @@ flowchart TD
 None.
 
 ## Implementation and validation results
-
-The owner approved implementation in the conversation: "thanks, continue with the implementation".
 
 - Changed the README diagram from `flowchart LR` to `flowchart TD`.
 - Reviewed the README diff: only the direction changed; all nodes, labels, and connections are preserved.

@@ -2,9 +2,9 @@
 
 Status: Proposed
 
-## Request and problem
+## Problem
 
-Summarize what the owner requested and why it matters.
+Describe the current behavior, its limitation, and the desired outcome directly. Omit conversational history and statements about who requested the change.
 
 ## Proposed change
 

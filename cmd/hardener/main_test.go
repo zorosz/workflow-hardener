@@ -74,7 +74,7 @@ func TestCompiledCLI(t *testing.T) {
 		{"whitespace and repeats", "whitespace-title", 1, hardener.Match, []string{"WH-R001"}},
 		{"outside run", "outside-run-title", 0, hardener.NoMatch, nil},
 		{"unsupported shell", "pwsh-title", 2, hardener.Unsupported, nil},
-		{"shell default", "default-shell-title", 2, hardener.Unsupported, nil},
+		{"shell default", "default-shell-title", 1, hardener.Match, []string{"WH-R001"}},
 		{"script comment", "comment-title", 1, hardener.Match, []string{"WH-R001"}},
 		{"wrapped expression", "wrapped-title", 2, hardener.Unsupported, nil},
 		{"partial finding", "mixed-support-title", 2, hardener.Unsupported, []string{"WH-R001"}},
@@ -83,6 +83,10 @@ func TestCompiledCLI(t *testing.T) {
 		{"body environment variable", "env-body", 0, hardener.NoMatch, nil},
 		{"title and body in one step", "mixed-title-body", 1, hardener.Match, []string{"WH-R001", "WH-R002"}},
 		{"partial body finding", "mixed-support-body", 2, hardener.Unsupported, []string{"WH-R002"}},
+		{"container body", "container-body", 1, hardener.Match, []string{"WH-R002"}},
+		{"runner default", "runner-default-title", 1, hardener.Match, []string{"WH-R001"}},
+		{"job shell override", "job-shell-body", 1, hardener.Match, []string{"WH-R002"}},
+		{"container with partial coverage", "mixed-container-body", 2, hardener.Unsupported, []string{"WH-R002"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := run(t, tc.want, "scan", "--root", root, "--file", "testdata/"+tc.file+".workflow.txt")
@@ -103,6 +107,18 @@ func TestCompiledCLI(t *testing.T) {
 			if tc.file == "mixed-title-body" && (report.Totals.AnalyzedSteps != 1 ||
 				len(report.Files[0].Findings[1].Evidence) != 2) {
 				t.Fatalf("mixed step or repeated body counted incorrectly: %+v", report)
+			}
+			if tc.file == "mixed-container-body" {
+				f := report.Files[0]
+				if report.Totals != (hardener.Totals{Files: 1, ParsedFiles: 1, RunSteps: 7, AnalyzedSteps: 5, OutsideSteps: 2, UnsupportedFiles: 1, Findings: 1}) ||
+					len(f.Issues) != 2 || f.Findings[0].StepIndex != 6 || f.Findings[0].Location.Line != 24 {
+					t.Fatalf("container coverage or finding attribution changed: %+v", report)
+				}
+				for i, index := range []int{1, 8} {
+					if f.Issues[i].Code != "unsupported_expression" || f.Issues[i].StepIndex == nil || *f.Issues[i].StepIndex != index {
+						t.Fatalf("unexpected container issue: %+v", f.Issues[i])
+					}
+				}
 			}
 		})
 	}

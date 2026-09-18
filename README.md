@@ -1,6 +1,6 @@
 # Workflow Hardener
 
-A small Go command-line tool that checks GitHub Actions workflows for direct pull-request title and body interpolation in Bash scripts. It reports findings with file locations and makes unsupported cases visible. Workflow files are read as data; their scripts are never executed.
+A small Go command-line tool that checks GitHub Actions workflows for direct pull-request title and body interpolation in Bash and `sh` scripts. It reports findings with file locations and makes unsupported cases visible. Workflow files are read as data; their scripts are never executed.
 
 ## The problem
 
@@ -34,13 +34,13 @@ flowchart TD
     REPO[Public GitHub repository] --> FETCH[Resolve commit and fetch workflow blobs]
     FETCH --> READ
     READ --> YAML[Parse jobs and steps]
-    YAML --> RULE[Inspect Bash run scripts]
+    YAML --> RULE[Resolve shell and inspect Bash/sh run scripts]
     RULE --> RESULT[JSON findings and coverage]
 ```
 
 There is one command, `scan`, and two rules:
 
-| Rule ID | Direct expression in an explicit Bash run step |
+| Rule ID | Direct expression in a supported Bash/sh run step |
 |---|---|
 | `WH-R001` | `${{ github.event.pull_request.title }}` |
 | `WH-R002` | `${{ github.event.pull_request.body }}` |
@@ -51,18 +51,19 @@ The JSON report lists both rules in `"rule_ids": ["WH-R001", "WH-R002"]`. This r
 
 ## Demo
 
-On GitHub, open **Actions → Scanner CI → Run workflow**. The workflow runs the tests, vets and builds the program, then displays these six examples in the run summary:
+On GitHub, open **Actions → Scanner CI → Run workflow**. The workflow runs the tests, vets and builds the program, then displays these seven examples in the run summary:
 
 | Example | Expected result | Exit |
 |---|---|---|
 | [Direct title](testdata/risky-title.workflow.txt) | `match`, one finding | 1 |
 | [Environment variable](testdata/env-title.workflow.txt) | `no_match` | 0 |
-| [Inherited shell](testdata/default-shell-title.workflow.txt) | `unsupported` | 2 |
+| [Inherited Bash shell](testdata/default-shell-title.workflow.txt) | `match`, one finding | 1 |
 | [Direct body](testdata/risky-body.workflow.txt) | `match`, one finding | 1 |
 | [Body environment variable](testdata/env-body.workflow.txt) | `no_match` | 0 |
 | [Title and repeated body in one step](testdata/mixed-title-body.workflow.txt) | `match`, two findings | 1 |
+| [PowerShell](testdata/pwsh-title.workflow.txt) | `unsupported` | 2 |
 
-The inherited-shell example intentionally demonstrates a limitation. A successful demo checks all six examples, including exit 2. Full JSON reports are printed in the demo step's log.
+The PowerShell example intentionally demonstrates a limitation. A successful demo checks all seven examples, including exit 2. Full JSON reports are printed in the demo step's log.
 
 With Go 1.27 or later, build and scan from the repository root. On Windows:
 
@@ -113,14 +114,32 @@ $env:TARGET_REPOSITORY = 'https://github.com/OWNER/REPO'
 .\bin\hardener.exe scan --repo "$env:TARGET_REPOSITORY"
 ```
 
+## Shell selection
+
+Both rules use the same shell resolution. The first applicable setting wins:
+
+| Priority | Setting | Supported behavior |
+|---|---|---|
+| 1 | Step `shell` | Exact `bash` or `sh` |
+| 2 | Job `defaults.run.shell` | Exact `bash` or `sh` |
+| 3 | Workflow `defaults.run.shell` | Exact `bash` or `sh` |
+| 4 | Static job container on a recognized Ubuntu runner | Default `sh` |
+| 5 | Recognized Ubuntu/macOS runner without a job container | Default Bash with possible `sh` fallback |
+
+Runner inference accepts only scalar `runs-on` values `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-24.04`, `ubuntu-26.04`, `macos-latest`, `macos-14`, `macos-15`, and `macos-26`. A static container specifies a nonempty literal image string, either directly or through `container.image`. Images are never downloaded or inspected.
+
+A step can inherit a workflow shell even when its job sets only `defaults.run.working-directory`. An empty, dynamic, or unsupported shell at the selected level blocks fallback. Explicit or inherited `bash`/`sh` settings do not require runner inference. These rules follow [GitHub's shell settings](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell) and [container defaults](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container).
+
+For example, [the container-body fixture](testdata/container-body.workflow.txt) omits the step shell, resolves to `sh`, and reports `WH-R002`. In [the mixed container fixture](testdata/mixed-container-body.workflow.txt), all seven run steps have supported shells, but two contain other expressions. Five steps are analyzed, one body finding is retained, and the scan returns exit 2 for incomplete expression coverage.
+
 ## Scope and limitations
 
-- Only explicit step-level `shell: bash` is supported. Shell defaults, other shells, and reusable workflows are reported as unsupported.
+- PowerShell, cmd, Python, custom shell commands, and unresolved shells are unsupported. Runner arrays/groups, matrix expressions, unknown runner labels, and dynamic container selection cannot establish a default shell. Reusable workflows remain unsupported.
 - The rules recognize `${{ github.event.pull_request.title }}` and `${{ github.event.pull_request.body }}` with optional surrounding spaces, tabs, or line breaks. Both can appear in the same step. Other or incomplete expressions make the entire step unsupported for both rules, with no findings from that step.
 - Expressions in `env`, step names, and other fields are outside the rules. Action `uses` steps are counted but their implementations are not inspected.
 - The rules inspect decoded script text, including shell comments. They do not evaluate conditions, shell behavior, exploitability, or data flow.
 - Findings identify the start of the YAML `run` value, using one-based lines and columns and a zero-based step index.
-- Input is limited to 50 files, each at most 256 KiB. Local filenames must be explicitly supplied; repository mode discovers workflow filenames. Invalid YAML, duplicate keys, multiple documents, aliases, merge keys, links, and local paths outside the input root are rejected.
+- Input is limited to 50 files, each at most 256 KiB. Local filenames must be explicitly supplied; repository mode discovers workflow filenames. Invalid YAML, malformed shell defaults, non-string shell settings, duplicate keys, multiple documents, aliases, merge keys, links, and local paths outside the input root are rejected.
 
 Exit **0** means supported analysis completed without a finding. Exit **1** means a finding was reported. Exit **2** means an error or incomplete analysis; findings from supported steps remain in the report. A workflow with no run steps is also unsupported.
 
@@ -131,6 +150,6 @@ Exit **0** means supported analysis completed without a finding. Exit **1** mean
 - [`testdata/`](testdata/) contains small synthetic workflow examples stored as inert `.workflow.txt` files.
 - [The code walkthrough](docs/ARCHITECTURE.md) follows one input through the functions and explains the Go concepts involved.
 
-Tests live beside their code in `_test.go` files. CI runs `go test ./...`, `go vet ./...`, and `go build`; the integration test checks actual process exit codes and rule IDs against all fourteen examples.
+Tests live beside their code in `_test.go` files. CI runs `go test ./...`, `go vet ./...`, and `go build`; the integration test checks actual process exit codes and rule IDs against all eighteen examples.
 
-Repository tests simulate GitHub HTTP responses without live network requests. They cover commit pinning, source locations, both rules, filename validation, redirects, rate limits, byte and file limits, partial failures, cancellation, and CLI reporting.
+Repository tests simulate GitHub HTTP responses without live network requests. They cover commit pinning, source locations, both rules, shell resolution matching local scans, filename validation, redirects, rate limits, byte and file limits, partial failures, cancellation, and CLI reporting.

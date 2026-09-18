@@ -36,6 +36,10 @@ func ParseWorkflow(name string, data []byte) (Workflow, error) {
 	if err != nil {
 		return w, err
 	}
+	workflowShell, err := defaultShell(root["defaults"], "workflow")
+	if err != nil {
+		return w, err
+	}
 	jobsNode := root["jobs"]
 	if jobsNode == nil {
 		return w, errors.New("workflow is missing jobs")
@@ -57,6 +61,10 @@ func ParseWorkflow(name string, data []byte) (Workflow, error) {
 			return w, errors.New("job id must not be empty")
 		}
 		job, err := mapping(jobs[id], "job")
+		if err != nil {
+			return w, err
+		}
+		jobShell, err := defaultShell(job["defaults"], "job")
 		if err != nil {
 			return w, err
 		}
@@ -94,10 +102,8 @@ func ParseWorkflow(name string, data []byte) (Workflow, error) {
 				return w, errors.New("step run must be a string")
 			}
 			step := Step{JobID: id, Index: index, Run: run.Value, ShellExplicit: shell != nil,
+				Shell:    resolveShell(shell, jobShell, workflowShell, job["runs-on"], job["container"]),
 				Location: Location{Kind: "run_scalar_start", Line: run.Line, Column: run.Column}}
-			if shell != nil {
-				step.Shell = shell.Value
-			}
 			w.Steps = append(w.Steps, step)
 		}
 	}

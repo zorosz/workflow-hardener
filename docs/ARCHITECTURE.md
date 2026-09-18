@@ -12,7 +12,8 @@ flowchart TD
     SCAN --> ONE[scanFile]
     ONE --> READ[workflowReader.Read: read bounded bytes]
     READ --> PARSE[ParseWorkflow: extract steps]
-    PARSE --> RULE[AnalyzePRText: detect title and body patterns]
+    PARSE --> SHELL[resolveShell: select Bash/sh coverage]
+    SHELL --> RULE[AnalyzePRText: detect title and body patterns]
     RULE --> RESULT[FileResult: findings and coverage]
     RESULT --> REPORT[Run: write JSON and return exit code]
 ```
@@ -27,6 +28,7 @@ flowchart TD
 | [`input.go`](../internal/hardener/input.go) | Reads bounded files beneath an input root and rejects links and unsafe paths. | File I/O, `os.Root`, `defer`, explicit errors |
 | [`github.go`](../internal/hardener/github.go) | Validates a repository, resolves its default branch to a commit, discovers workflow blobs, and fetches bounded bytes. | HTTP requests, contexts, JSON decoding, interfaces |
 | [`workflow.go`](../internal/hardener/workflow.go) | Walks YAML nodes to extract jobs, run steps, shells, and locations. | External packages, maps, slices, recursion |
+| [`shell.go`](../internal/hardener/shell.go) | Resolves step, job, and workflow shells, then supported runner/container defaults. | Pointers, presence checks, ordered selection, `switch` |
 | [`pr_text.go`](../internal/hardener/pr_text.go) | Checks the shell, recognizes direct title and body expressions, and groups evidence by rule within each step. | Loops, string operations, early returns |
 | [`scan.go`](../internal/hardener/scan.go) | Connects reading, parsing, and detection; combines file results and exit codes. | Composition, sorting, `switch` |
 | [`report.go`](../internal/hardener/report.go) | Writes indented JSON and limits diagnostic text. | `encoding/json`, interfaces, UTF-8 strings |
@@ -40,7 +42,7 @@ For `hardener scan --file testdata/risky-title.workflow.txt`:
 1. `main` calls `Run`. It parses the flags and opens the current directory as the input root.
 2. `Scan` validates and sorts the requested filenames, then calls `scanFile` for each.
 3. `Inputs.Read` checks the path and size and reads the file. It never runs the script.
-4. `ParseWorkflow` extracts the `inspect` job's first step, its `bash` shell, its decoded `run` text, and the run value's source location.
+4. `ParseWorkflow` extracts the `inspect` job's first step, its decoded `run` text, and the run value's source location. It calls `resolveShell`, which selects the explicit `bash` shell.
 5. `AnalyzePRText` calls `directPRTextExpressions` to check every expression in the step. It finds the exact title expression, returns one `WH-R001` finding, and records one analyzed step.
 6. `scanFile` sets the status to `match`. `Scan` combines the totals, and `Run` writes JSON and returns exit 1.
 
@@ -52,7 +54,19 @@ With [the mixed title/body example](../testdata/mixed-title-body.workflow.txt), 
 
 The overall JSON report uses `rule_ids` to list both checked rules, replacing the old report-level `rule_id`. Individual findings retain `rule_id`, which comes from `PRTitleRuleID` or `PRBodyRuleID` in `model.go`. The existing exit codes apply to the combined results.
 
-With [the inherited-shell example](../testdata/default-shell-title.workflow.txt), the step omits its own shell. The detector records `unsupported_shell`, and the scan exits 2. It does not infer the workflow-level default. An unsupported step and a finding can coexist; incomplete analysis takes precedence in the exit code.
+With [the inherited-shell example](../testdata/default-shell-title.workflow.txt), the step omits its own shell. `resolveShell` selects the workflow's `defaults.run.shell: bash`, so the title finding is reported with exit 1. An unsupported step and a finding can still coexist; incomplete analysis takes precedence in the exit code.
+
+## Resolve the shell
+
+`defaultShell` validates workflow and job `defaults.run` mappings and returns their shell nodes. A nil pointer means the setting is absent; a present empty string must block fallback. A job default that only sets `working-directory` returns no shell, allowing inheritance from the workflow. Structurally malformed defaults and non-string shells are parsing errors.
+
+`resolveShell` checks step, job, then workflow shell nodes. The first present setting must be exactly `bash` or `sh`; any other selected value returns an unresolved result. A supported explicit or inherited setting does not need runner or container inference.
+
+When no shell setting is present, the resolver uses the eight scalar Ubuntu/macOS runner labels listed in [the README](../README.md#shell-selection). Without a job container, it returns the internal `bash-or-sh` marker to represent Bash with a possible `sh` fallback. For an allowlisted Ubuntu runner with a literal container image, it returns `sh`. Other runner/container contexts remain unresolved. The internal marker is never accepted as a literal `shell` value.
+
+`Step.Shell` holds this resolved value or an empty string for unsupported cases. `Step.ShellExplicit` records whether the step declared a shell; it no longer determines coverage. `AnalyzePRText` accepts the three supported resolved values and then applies the unchanged expression check. The report's JSON fields and run-value source locations stay the same.
+
+[The mixed container example](../testdata/mixed-container-body.workflow.txt) has seven run steps. Shell resolution supports all seven, but two contain other expressions. The result keeps the explicit Bash step's body finding, counts five analyzed steps, reports two `unsupported_expression` issues, and returns exit 2. Resolving shells does not expand expression handling.
 
 ## Follow a repository scan
 
@@ -80,10 +94,10 @@ The scan step captures JSON, stderr, and the process exit code. The following st
 
 Go's `_test.go` files stay next to the code and are excluded from the normal executable. Table-driven tests describe several inputs and expected outcomes using a slice and a loop.
 
-- Input and parser tests check file boundaries, malformed YAML, step extraction, and source locations.
+- Input and parser tests check file boundaries, malformed YAML, step extraction, and source locations. [`shell_test.go`](../internal/hardener/shell_test.go) covers shell precedence, container/platform defaults, blocked fallback, malformed defaults, and unresolved contexts.
 - Detector tests check both expression syntaxes, shell restrictions, repeated occurrences, mixed rules, step attribution, and unsupported cases.
 - Scanner and CLI tests check combined results, argument handling, and output errors.
-- [`github_test.go`](../internal/hardener/github_test.go) replaces the HTTP transport with simulated responses. It checks snapshot pinning, discovery, download bounds, links, redirects, rate limits, partial findings, and cancellation without live GitHub calls.
-- [`main_test.go`](../cmd/hardener/main_test.go) builds the real executable and checks the fourteen synthetic examples, rule IDs, and process exit codes. It does not execute workflow scripts.
+- [`github_test.go`](../internal/hardener/github_test.go) replaces the HTTP transport with simulated responses. It checks snapshot pinning, discovery, download bounds, links, redirects, rate limits, partial findings, and cancellation without live GitHub calls. Shell fixtures must produce the same findings, locations, and coverage in local and repository scans.
+- [`main_test.go`](../cmd/hardener/main_test.go) builds the real executable and checks the eighteen synthetic examples, rule IDs, and process exit codes. It does not execute workflow scripts.
 
 To understand the project incrementally, read `main.go` and `cli.go` first, follow the example above, then read the detector alongside its table-driven tests. The file checks and YAML validation can be studied after that central path is clear.

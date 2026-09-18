@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -146,6 +148,68 @@ func TestRepositoryScanSnapshotAndLocations(t *testing.T) {
 	}
 	if len(*requests) != 8 {
 		t.Fatalf("unexpected requests: %v", *requests)
+	}
+}
+
+func TestRepositoryAndLocalShellResolution(t *testing.T) {
+	for _, tc := range []struct {
+		fixture, ruleID                       string
+		exit, runSteps, analyzed, line, index int
+	}{
+		{"default-shell-title", PRTitleRuleID, 1, 1, 1, 14, 0},
+		{"container-body", PRBodyRuleID, 1, 1, 1, 12, 0},
+		{"runner-default-title", PRTitleRuleID, 1, 1, 1, 11, 0},
+		{"job-shell-body", PRBodyRuleID, 1, 1, 1, 17, 0},
+		{"mixed-container-body", PRBodyRuleID, 2, 7, 5, 24, 6},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "testdata", tc.fixture+".workflow.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			const path = ".github/workflows/ci.yml"
+			in, dir := testInputs(t)
+			put(t, dir, path, data)
+			local, err := Scan(in, []string{path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			replies := fakeSnapshot(t, blobEntry("ci.yml", testBlob, string(data)))
+			replies[testPrefix+"/git/blobs/"+testBlob] = apiReply{status: 200, body: string(data)}
+			client, _ := fakeGitHub(t, replies)
+			remote := scanRepository(context.Background(), "owner/project", client)
+			if remote.Source == nil || *remote.Source != (RepositorySource{Repository: "owner/project", Commit: testCommit}) {
+				t.Fatalf("missing snapshot source: %+v", remote.Source)
+			}
+			local.Source = remote.Source
+			if !reflect.DeepEqual(local, remote) {
+				t.Fatalf("local and repository analysis differ: local=%+v remote=%+v", local, remote)
+			}
+			if remote.ExitCode != tc.exit || len(remote.Files) != 1 || remote.Totals.Findings != 1 ||
+				remote.Totals.RunSteps != tc.runSteps || remote.Totals.AnalyzedSteps != tc.analyzed {
+				t.Fatalf("unexpected shell resolution report: %+v", remote)
+			}
+			file := remote.Files[0]
+			finding := file.Findings[0]
+			if finding.RuleID != tc.ruleID || finding.Path != path || finding.JobID != "inspect" || finding.StepIndex != tc.index ||
+				finding.Location != (Location{Kind: "run_scalar_start", Line: tc.line, Column: 14}) {
+				t.Fatalf("finding lost attribution: %+v", finding)
+			}
+			if tc.exit == 1 {
+				if file.Status != Match || len(file.Issues) != 0 {
+					t.Fatalf("supported shell was rejected: %+v", file)
+				}
+			} else {
+				if file.Status != Unsupported || len(file.Issues) != 2 || remote.Totals.OutsideSteps != 2 {
+					t.Fatalf("partial coverage was lost: %+v", file)
+				}
+				for i, index := range []int{1, 8} {
+					if file.Issues[i].Code != "unsupported_expression" || file.Issues[i].StepIndex == nil || *file.Issues[i].StepIndex != index {
+						t.Fatalf("unknown expression lost attribution: %+v", file.Issues[i])
+					}
+				}
+			}
+		})
 	}
 }
 

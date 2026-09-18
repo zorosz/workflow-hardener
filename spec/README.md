@@ -4,7 +4,7 @@ This folder holds small, reviewable descriptions of user-requested changes befor
 
 ## Process
 
-1. Investigate the request without changing its implementation. Draft a spec that explains the problem, proposed changes, affected files, acceptance criteria, and planned validation. Note any questions that affect scope.
+1. Investigate the request without changing its implementation. Draft a spec that explains the problem, proposed changes, affected files, acceptance criteria, and planned validation. Describe the technical problem directly; omit conversational history and statements about who requested the change. Note any questions that affect scope.
 2. Set the status to `Proposed`, link the spec in the conversation, and ask the owner to review it. Do not implement while review is pending. The initial request authorizes drafting, not implementation of the resulting spec.
 3. Revise the spec as needed. An explicit reply such as "Approve spec 001" authorizes that version's scope. Set the status to `Approved` and implement it without asking for the same approval again.
 4. If a material change to scope is needed, update the spec, return it to `Proposed`, and request another review before implementing the added scope.
@@ -15,5 +15,6 @@ Read-only investigation, spec drafting and revisions, and the owner's explicitly
 ## Requests
 
 - [001: Make the README flowchart vertical](001-readme-flowchart.md)
+- [002: Resolve Bash and sh shells for the existing PR rules](002-shell-resolution.md)
 
 Each request's file contains its current status.

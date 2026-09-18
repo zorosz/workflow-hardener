@@ -6,7 +6,7 @@ const (
 	MaxFiles      = 50
 	MaxFileBytes  = 256 * 1024
 	MaxTextBytes  = 512
-	ScanScope     = "Explicit step-level shell: bash; direct github.event.pull_request.title (WH-R001) and github.event.pull_request.body (WH-R002) expressions with surrounding ASCII spaces, tabs, CRs, or LFs only. Any other or incomplete expression, missing/other shell, reusable-workflow job, or no run steps is unsupported. Conditions, shell interpretation, and data flow are not evaluated."
+	ScanScope     = "Bash/sh run steps selected by exact step, job, or workflow shell settings, or static defaults on allowlisted Ubuntu/macOS runners (sh in static Ubuntu job containers). Direct github.event.pull_request.title (WH-R001) and github.event.pull_request.body (WH-R002) expressions with surrounding ASCII spaces, tabs, CRs, or LFs only. Other/incomplete expressions, unresolved/other shells, reusable-workflow jobs, or no run steps are unsupported. Conditions, shell interpretation, and data flow are not evaluated."
 )
 
 type Status string
@@ -28,7 +28,7 @@ type Step struct {
 	JobID         string
 	Index         int
 	Run           string
-	Shell         string
+	Shell         string // Resolved bash, sh, defaultPOSIXShell, or empty if unsupported.
 	ShellExplicit bool
 	Location      Location
 }

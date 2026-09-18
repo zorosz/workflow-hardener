@@ -1,0 +1,28 @@
+# Synthetic test input; never execute as a workflow.
+name: mixed-container-body-fixture
+'on': pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    container: ubuntu
+    steps:
+      - name: Literal with container default
+        run: echo first
+      - name: Unknown expression with container default
+        run: echo "${{ github.head_ref || github.ref_name }}"
+      - uses: example/action@v1
+      - uses: example/action@v1
+      - name: Explicit Bash literal
+        shell: bash
+        run: echo second
+      - name: Another literal with container default
+        run: echo third
+      - name: Direct body in explicit Bash
+        shell: bash
+        run: echo "${{ github.event.pull_request.body }}"
+      - name: Final literal with container default
+        run: echo fourth
+      - name: Another unknown expression with container default
+        run: echo "${{ github.head_ref || github.ref_name }}"
