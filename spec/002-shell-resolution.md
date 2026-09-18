@@ -72,4 +72,4 @@ None. This proposal intentionally covers shell resolution; expression support re
 - Added coverage for precedence, the eight runner labels, container defaults, unknown contexts, and expression boundaries in all supported shells. Added local/repository parity checks and four synthetic fixtures, bringing compiled CLI checks to eighteen examples.
 - Updated the inherited-shell demo to expect `WH-R001` and added the PowerShell unsupported example, for seven CI demos. Updated the README, walkthrough, and project scope.
 - Reviewed the code and test changes. `gofmt -l` reported no formatting differences, and `git diff --check` passed.
-- Tests, vet, build, and CI demos have not been run for these changes. GitHub-hosted CI validation is pending separately authorized commit/push. No project code or target scripts were executed locally.
+- [Scanner CI passed](https://github.com/zorosz/workflow-hardener/actions/runs/35325203894) for implementation commit `324e09d`: tests (including all eighteen compiled CLI examples), vet, build, and all seven demos. No project code or target scripts were executed locally.
