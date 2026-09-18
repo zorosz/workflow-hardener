@@ -29,7 +29,7 @@ This follows GitHub's [intermediate environment variable guidance](https://docs.
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     FILE[Local workflow file] --> READ[Read bounded input]
     REPO[Public GitHub repository] --> FETCH[Resolve commit and fetch workflow blobs]
     FETCH --> READ
