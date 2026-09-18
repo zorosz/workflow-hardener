@@ -7,8 +7,13 @@ import (
 	"strings"
 )
 
+// workflowReader supplies bounded bytes from local files or a GitHub snapshot.
+type workflowReader interface {
+	Read(name string, limit int64) ([]byte, error)
+}
+
 // scanFile follows the input through reading, parsing, and detection.
-func scanFile(in *Inputs, name string) FileResult {
+func scanFile(in workflowReader, name string) FileResult {
 	result := FileResult{Path: name, Status: Error, Findings: []Finding{}, Issues: []Issue{}}
 	data, err := in.Read(name, MaxFileBytes)
 	if err != nil {
@@ -48,17 +53,23 @@ func scanFile(in *Inputs, name string) FileResult {
 }
 
 type ScanReport struct {
-	RuleIDs  []string     `json:"rule_ids"`
-	Scope    string       `json:"scope"`
-	ExitCode int          `json:"exit_code"`
-	Totals   Totals       `json:"totals"`
-	Files    []FileResult `json:"files"`
+	RuleIDs  []string          `json:"rule_ids"`
+	Scope    string            `json:"scope"`
+	ExitCode int               `json:"exit_code"`
+	Totals   Totals            `json:"totals"`
+	Files    []FileResult      `json:"files"`
+	Source   *RepositorySource `json:"source,omitempty"`
+	Issues   []Issue           `json:"issues,omitempty"`
+}
+
+func newScanReport() ScanReport {
+	return ScanReport{RuleIDs: []string{PRTitleRuleID, PRBodyRuleID}, Scope: ScanScope, Files: []FileResult{}}
 }
 
 // Scan processes explicit files in a stable order. Incomplete analysis takes
 // precedence over a finding in the exit code, while all findings are retained.
-func Scan(in *Inputs, names []string) (ScanReport, error) {
-	report := ScanReport{RuleIDs: []string{PRTitleRuleID, PRBodyRuleID}, Scope: ScanScope, Files: []FileResult{}}
+func Scan(in workflowReader, names []string) (ScanReport, error) {
+	report := newScanReport()
 	if len(names) == 0 || len(names) > MaxFiles {
 		return report, fmt.Errorf("scan requires 1-%d explicit files", MaxFiles)
 	}

@@ -2,6 +2,7 @@ package hardener
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -86,5 +87,38 @@ func TestCLIReportRuleIDs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ruleIDs, []string{"WH-R001", "WH-R002"}) {
 		t.Fatalf("incorrect report rule IDs: %v", ruleIDs)
+	}
+}
+
+func TestCLIRejectsMixedRepositoryAndLocalInputs(t *testing.T) {
+	for _, args := range [][]string{
+		{"scan", "--repo", "owner/repo", "--root", "."},
+		{"scan", "--repo", "owner/repo", "--file", "ci.yml"},
+		{"scan", "--repo", "", "--file", "ci.yml"},
+	} {
+		var stdout, stderr bytes.Buffer
+		fetch := func(context.Context, string) ScanReport {
+			t.Fatal("conflicting arguments triggered a network scan")
+			return ScanReport{}
+		}
+		if code := run(args, &stdout, &stderr, fetch); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "cannot be combined") {
+			t.Fatalf("conflicting inputs accepted: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestCLIInvalidRepositoryReturnsJSON(t *testing.T) {
+	for _, repository := range []string{"", "https://example.com/owner/repo", "owner/repo/tree/main"} {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"scan", "--repo", repository}, &stdout, &stderr); code != 2 {
+			t.Fatalf("invalid repository exit %d", code)
+		}
+		var report ScanReport
+		if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.ExitCode != 2 || len(report.Issues) != 1 || report.Issues[0].Code != "invalid_repository" || report.Source != nil {
+			t.Fatalf("invalid repository was not reported: %+v", report)
+		}
 	}
 }

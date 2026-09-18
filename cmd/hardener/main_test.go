@@ -117,4 +117,14 @@ func TestCompiledCLI(t *testing.T) {
 			t.Fatalf("incomplete scan lost its finding: %+v", report)
 		}
 	})
+	t.Run("invalid repository reports an error without networking", func(t *testing.T) {
+		output := run(t, 2, "scan", "--repo", "https://example.com/owner/repo")
+		var report hardener.ScanReport
+		if err := json.Unmarshal(output, &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.ExitCode != 2 || len(report.Issues) != 1 || report.Issues[0].Code != "invalid_repository" {
+			t.Fatalf("repository CLI error was lost: %+v", report)
+		}
+	})
 }

@@ -1,0 +1,101 @@
+name: Scan public repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Public GitHub repository URL or OWNER/REPO'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+
+    steps:
+      - name: Check out scanner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build scanner
+        run: go build -o bin/hardener ./cmd/hardener
+
+      - name: Scan public repository
+        id: scan
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          mkdir -p out/repository-scan
+          if ./bin/hardener scan --repo "$TARGET_REPOSITORY" > out/repository-scan/report.json 2> out/repository-scan/stderr.txt; then
+            code=0
+          else
+            code=$?
+          fi
+          printf '%s\n' "$code" > out/repository-scan/exit-code.txt
+          printf 'exit_code=%s\n' "$code" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize scan
+        if: always() && steps.scan.outcome != 'skipped'
+        shell: bash
+        run: |
+          if ! jq -e '(.exit_code == 0 or .exit_code == 1 or .exit_code == 2) and (.files | type == "array")' out/repository-scan/report.json > /dev/null; then
+            printf '## Repository scan\n\nThe scanner did not produce a valid report. Check the logs and report artifact.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          jq -r '
+            def display: tostring | (if length > 512 then .[0:512] + "…" else . end) | @html;
+            "## Repository scan", "",
+            (if .exit_code == 0 then "Completed: no findings for the two supported rules."
+             elif .exit_code == 1 then "Completed: findings require review."
+             else "Incomplete analysis or error. Any findings below are retained." end), "",
+            ("<p>Repository: <code>" + ((.source.repository // "unavailable") | @html) + "</code><br>Commit: <code>" + ((.source.commit // "unavailable") | @html) + "</code></p>"),
+            ("<p>Files: " + (.totals.files | tostring) + "; findings: " + (.totals.findings | tostring) + "; analyzed run steps: " + (.totals.analyzed_steps | tostring) + "</p>"),
+            "<table><tr><th>Workflow</th><th>Status</th><th>Findings</th></tr>",
+            (.files[] | "<tr><td><code>" + (.path | display) + "</code></td><td>" + (.status | @html) + "</td><td>" + (.findings | length | tostring) + "</td></tr>"),
+            "</table>", "",
+            "### Findings", "",
+            "<ul>",
+            (limit(100; .files[].findings[]) | "<li><code>" + (.rule_id | @html) + "</code> in <code>" + (.path | display) + "</code>, line " + (.location.line | tostring) + ": " + (.message | display) + "</li>"),
+            "</ul>", "",
+            "### Coverage and errors", "",
+            "<ul>",
+            (.issues[]? | "<li>" + (.message | @html) + "</li>"),
+            (limit(100; .files[] | .path as $path | .issues[] | {path: $path, message: .message}) | "<li><code>" + (.path | display) + "</code>: " + (.message | display) + "</li>"),
+            "</ul>", "",
+            "The summary shows up to 100 findings and 100 file issues, with long text shortened. Download the repository-scan artifact for the full JSON report."
+          ' out/repository-scan/report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan report
+        if: always() && steps.scan.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repository-scan
+          path: out/repository-scan/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Apply scan exit code
+        if: always() && steps.scan.outcome != 'skipped'
+        shell: bash
+        run: |
+          code=$(cat out/repository-scan/exit-code.txt)
+          case "$code" in
+            0|1|2) exit "$code" ;;
+            *) echo 'Scanner failed without a recognized exit code.' >&2; exit 2 ;;
+          esac
