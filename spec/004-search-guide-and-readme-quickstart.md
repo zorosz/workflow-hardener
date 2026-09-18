@@ -80,4 +80,5 @@ None. The manual run means the existing **Scan public repository** workflow; the
 - Kept artifact retention, summary limits, and workflow execution details under `GitHub scan details`. Moved the PowerShell environment-variable example alongside the local repository CLI examples.
 - Added `docs/SEARCHING.md` with all three approved queries, matching layout examples, limitations, and instructions for passing a public repository from search results to the scanner.
 - Reviewed the documentation against the existing workflow and GitHub's documentation. Confirmed that all three query lines exactly match this spec; checked README section order, linked headings, relative file links, code-fence pairs, and whitespace.
-- Rendered Markdown and authenticated live search results were not inspected. Go tests were not run because this is a documentation-only change. No project code or target scripts were executed, and no scan was dispatched.
+- [Scanner CI passed](https://github.com/zorosz/workflow-hardener/actions/runs/35351234158) for documentation commit `5ab93f5`: tests (including all twenty-one compiled CLI examples), vet, build, and all seven demos.
+- Rendered Markdown and authenticated live search results were not inspected. No project code or target scripts were executed locally, and no manual repository scan was dispatched.
