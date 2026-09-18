@@ -17,5 +17,6 @@ Read-only investigation, spec drafting and revisions, and the owner's explicitly
 - [001: Make the README flowchart vertical](001-readme-flowchart.md)
 - [002: Resolve Bash and sh shells for the existing PR rules](002-shell-resolution.md)
 - [003: Support context references and fallback expressions](003-expression-support.md)
+- [004: Document search queries and surface manual scanning](004-search-guide-and-readme-quickstart.md)
 
 Each request's file contains its current status.

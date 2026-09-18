@@ -2,6 +2,17 @@
 
 A small Go command-line tool that checks GitHub Actions workflows for direct pull-request title and body interpolation in Bash and `sh` scripts. It reports findings with file locations and makes unsupported cases visible. Workflow files are read as data; their scripts are never executed.
 
+## Run entirely from GitHub
+
+1. Open [Actions → Scan public repository](https://github.com/zorosz/workflow-hardener/actions/workflows/scan-repository.yml).
+2. Choose **Run workflow**, select `main`, and enter a public repository URL or `OWNER/REPO` in the **repository** field.
+3. Click **Run workflow**, then open the run summary to review **Findings** and **Coverage and errors**.
+4. Download the **repository-scan** artifact for `report.json`, `stderr.txt`, and `exit-code.txt`.
+
+You need [write access to this scanner repository](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow) to start the workflow. Exit **0** means no findings within the supported rules; exit **1** means findings; exit **2** means incomplete analysis or an error. Both 1 and 2 mark the run failed, so read the summary for the reason.
+
+Use the [GitHub search guide](docs/SEARCHING.md) to find candidate repositories. See [GitHub scan details](#github-scan-details) for reporting and artifact retention, or [Scan a public repository](#scan-a-public-repository) to run the CLI locally.
+
 ## The problem
 
 GitHub Actions substitutes expressions before passing a `run` script to the shell. A pull-request title is user-controlled, so inserting it directly into a script can introduce shell commands. [GitHub's script injection guidance](https://docs.github.com/en/actions/concepts/security/script-injections) explains this risk.
@@ -84,6 +95,13 @@ After building the scanner, supply an HTTPS GitHub repository URL or `OWNER/REPO
 .\bin\hardener.exe scan --repo OWNER/REPO
 ```
 
+The CLI takes the repository through `--repo`; it does not automatically read an environment variable. You can pass one explicitly in PowerShell too:
+
+```powershell
+$env:TARGET_REPOSITORY = 'https://github.com/OWNER/REPO'
+.\bin\hardener.exe scan --repo "$env:TARGET_REPOSITORY"
+```
+
 Use `--repo` by itself; it cannot be combined with `--root` or `--file`. A trailing `.git` or slash is accepted. Branch-specific URLs, credentials, query strings, and fragments are rejected.
 
 The scanner resolves the default branch to one commit, discovers `.yml` and `.yaml` entries directly in `.github/workflows`, and downloads ordinary workflow files at that snapshot. It reads Git tree modes to reject links and submodules. It does not clone the repository, write target files to disk, install target dependencies, or run target scripts. Nested directories and other file extensions are outside discovery.
@@ -94,25 +112,11 @@ Requests are anonymous and restricted to `api.github.com`; the scanner does not 
 
 The existing 50-file and 256-KiB-per-file limits apply. Each metadata response is limited to 1 MiB, each request to 15 seconds, and the overall network scan to two minutes. Oversized responses and timeouts remain errors.
 
-## Run entirely from GitHub
+## GitHub scan details
 
-Once [the manual workflow](.github/workflows/scan-repository.yml) is on the default branch:
+Follow [Run entirely from GitHub](#run-entirely-from-github) to start a scan. [The manual workflow](.github/workflows/scan-repository.yml) builds this scanner on a GitHub-hosted runner and passes the form input through the `TARGET_REPOSITORY` environment variable into the quoted `--repo` argument. Checkout credentials are not persisted, action versions are pinned, and permissions are read-only. No supplied secrets are used to fetch the target.
 
-1. Open **Actions → Scan public repository → Run workflow** in this repository.
-2. Enter a public repository URL or `OWNER/REPO` in the **repository** field.
-3. Click **Run workflow**, then open the run summary for results.
-4. Download the **repository-scan** artifact for `report.json`, `stderr.txt`, and `exit-code.txt`. Artifacts are retained for seven days.
-
-GitHub requires write access to this repository to dispatch the workflow. The workflow builds this scanner on a GitHub-hosted runner and passes the form input through the `TARGET_REPOSITORY` environment variable into the quoted `--repo` argument. Checkout credentials are not persisted, action versions are pinned, and permissions are read-only. No supplied secrets are used to fetch the target.
-
-The summary and artifact steps run before the scanner's exit code is applied. A run with findings (exit 1) or incomplete analysis/errors (exit 2) is marked failed while its report remains available. Read the summary to distinguish those outcomes. The summary shows up to 100 findings and 100 file issues, shortening long text; the artifact contains the full scanner report. A build or infrastructure failure before scanning may have no report.
-
-The CLI takes the repository through `--repo`; it does not automatically read an environment variable. You can pass one explicitly in PowerShell too:
-
-```powershell
-$env:TARGET_REPOSITORY = 'https://github.com/OWNER/REPO'
-.\bin\hardener.exe scan --repo "$env:TARGET_REPOSITORY"
-```
+The summary and artifact steps run before the scanner's exit code is applied. A run with findings (exit 1) or incomplete analysis/errors (exit 2) is marked failed while its report remains available. Read the summary to distinguish those outcomes. The summary shows up to 100 findings and 100 file issues, shortening long text; the **repository-scan** artifact contains the full scanner report and is retained for seven days. A build or infrastructure failure before scanning may have no report.
 
 ## Shell selection
 
