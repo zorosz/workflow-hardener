@@ -1,6 +1,6 @@
 # 006: Automate candidate repository search
 
-Status: Approved
+Status: Implemented
 
 ## Problem
 
@@ -56,11 +56,15 @@ First verify authentication with one bounded `GET /search/code` request for `add
 
 ## Open questions
 
-The built-in Actions token has demonstrated code-search access to an external public repository with `permissions: {}`. The final discovery runner remains to be settled; no personal token or supplied-secret fallback is included. The four candidate-discovery queries and their download/filtering pipeline have not yet been implemented or exercised.
+The built-in Actions token has demonstrated code-search access to an external public repository with `permissions: {}`. The final discovery runner remains to be settled; no personal token or supplied-secret fallback is included. The four candidate-discovery queries and their download/filtering pipeline are implemented but have not yet been exercised against live GitHub results.
 
 ## Implementation and validation results
 
-The discovery tool is not implemented. Reviewed the branch authentication check's single API request, empty permissions, redirect behavior, time/size bounds, result validation, and output handling. Whitespace checks passed for the workflow and spec changes. A separate anonymous, read-only check confirmed that public `jquery/jquery` contains `addClass` in `src/attributes/classes.js`.
+Implemented the Go discovery executable, regex filters, bounded search/download pipeline, JSON output, and offline tests in the existing application package. CI now builds both executables. The search guide documents `GH_TOKEN`, fixed queries, sampling limits, candidate source locations, and usage in a trusted job. The executable creates a new `candidates.json` and refuses to overwrite an existing file. Discovery returns 0 when complete and 2 for errors or reported omissions; candidate matches do not use the scanner's finding exit code 1. A manual discovery workflow and bulk scanner are not included.
+
+Validation for this implementation: reviewed request destinations and authentication, redirect refusal, metadata validation, sampling/byte/time limits, regex boundaries, deduplication, partial results, and output-file handling. Go formatting and tracked/new-file whitespace checks passed. The new tests, vet, builds, and live discovery have not been run. No generated project code has been executed locally. Hosted CI can validate the implementation after a separately authorized commit and push.
+
+Previously reviewed the branch authentication check's single API request, empty permissions, redirect behavior, time/size bounds, result validation, and output handling. Whitespace checks passed for that workflow and spec change. A separate anonymous, read-only check confirmed that public `jquery/jquery` contains `addClass` in `src/attributes/classes.js`.
 
 [Check code search access passed](https://github.com/zorosz/workflow-hardener/actions/runs/35500013168) on 2026-09-20 for commit `267d47365029d4a403d72b9f39842857e6abff45` on `test/code-search-token`. Its successful result requires HTTP 200, `incomplete_results: false`, and a public `jquery/jquery` match. This confirms external public code-search access with the built-in job token and `permissions: {}` for the tested query. No checkout, supplied secrets, or target-code execution were used. Scanner tests/builds were not run for this workflow-only check, and no generated project code was executed locally.
 

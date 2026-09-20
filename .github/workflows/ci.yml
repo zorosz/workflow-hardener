@@ -36,7 +36,9 @@ jobs:
         run: go vet ./...
 
       - name: Build
-        run: go build -o bin/hardener ./cmd/hardener
+        run: |
+          go build -o bin/hardener ./cmd/hardener
+          go build -o bin/find-candidates ./cmd/find-candidates
 
       - name: Demonstrate both rules and coverage results
         shell: bash

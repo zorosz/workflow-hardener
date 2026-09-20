@@ -1,6 +1,6 @@
 # Code walkthrough
 
-The program has one executable and one application package. Two rules share one detector: `WH-R001` checks PR titles and `WH-R002` checks PR bodies. Start with the direct-title example and follow the calls below.
+The scanner has one command and one application package. A separate `find-candidates` executable uses that same package to collect provisional search matches. Two scanner rules share one detector: `WH-R001` checks PR titles and `WH-R002` checks PR bodies. Start with the direct-title example and follow the calls below.
 
 ```mermaid
 flowchart TD
@@ -104,6 +104,14 @@ The HTTP client sends anonymous GET requests only to constructed `api.github.com
 
 The scan step captures JSON, stderr, and the process exit code. The following steps render a summary with HTML-escaped repository text, filenames, and diagnostics and upload the report artifact even for findings or incomplete analysis. The final step applies the saved exit code, preserving the meanings of 0, 1, and 2 in the workflow result. Target scripts and dependencies are never run.
 
+## Candidate discovery
+
+[`cmd/find-candidates/main.go`](../cmd/find-candidates/main.go) passes arguments, the `GH_TOKEN` environment value, and output streams to `RunCandidates` in [`candidates.go`](../internal/hardener/candidates.go). It creates a new `candidates.json`, then calls `FindCandidates` with a two-minute network deadline. It accepts no search options and does not change the scanner's `Run` or `scan` command.
+
+Discovery processes four fixed REST queries, requesting one page of 25 items each with at least six seconds between searches. It validates each result, deduplicates repository/path/blob SHA combinations, and anonymously fetches at most 20 blobs. It reuses the existing HTTP client timeout/redirect policy, repository and SHA patterns, portable-path validation, byte limits, and JSON writer. Its authenticated search requests are separate from the scanner's anonymous HTTP path.
+
+Four case-sensitive Go regex filters cover the two documented layouts and two PR fields. Each emits at most one candidate per file/filter/field, identifying the blob and first regex match's starting line. No YAML parsing or scanner rules run during discovery. Errors and sampling omissions make the report incomplete and return exit 2 while preserving candidates; complete discovery returns 0 even when candidates exist. See the [search guide](SEARCHING.md#automated-candidate-discovery) for authentication, output details, and limitations. A live discovery workflow and the later bulk scan are not included.
+
 ## Tests
 
 Go's `_test.go` files stay next to the code and are excluded from the normal executable. Table-driven tests describe several inputs and expected outcomes using a slice and a loop.
@@ -112,6 +120,7 @@ Go's `_test.go` files stay next to the code and are excluded from the normal exe
 - Detector and expression tests check context references, strings containing delimiters, fallback alternatives, repeated evidence, mixed rules, step attribution, malformed/unsupported syntax, shell restrictions, and a long fallback chain.
 - Scanner and CLI tests check combined results, argument handling, and output errors.
 - [`github_test.go`](../internal/hardener/github_test.go) replaces the HTTP transport with simulated responses. It checks snapshot pinning, discovery, download bounds, links, redirects, rate limits, partial findings, and cancellation without live GitHub calls. Shell and expression fixtures must produce the same findings, locations, and coverage in local and repository scans.
+- [`candidates_test.go`](../internal/hardener/candidates_test.go) uses fake HTTP responses, synthetic tokens, and an injected pacing function. It checks both regex layouts, source attribution, deduplication, metadata validation, sampling and byte limits, partial failures, cancellation, credential handling, and output-file behavior without network calls or real search delays.
 - [`main_test.go`](../cmd/hardener/main_test.go) builds the real executable and checks the twenty-one synthetic examples, rule IDs, and process exit codes. It does not execute workflow scripts.
 
 To understand the project incrementally, read `main.go` and `cli.go` first, follow the example above, then read the detector alongside its table-driven tests. The file checks and YAML validation can be studied after that central path is clear.
