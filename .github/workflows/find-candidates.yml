@@ -2,6 +2,12 @@ name: Find candidates
 
 on:
   workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Debug logging'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -35,23 +41,42 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          DEBUG_LOGGING: ${{ inputs.debug }}
         run: |
           mkdir -p out
           mkdir out/candidate-search
           cd out/candidate-search
-          if ../../bin/find-candidates > stdout.txt 2> stderr.txt; then
+          args=()
+          if [ "$DEBUG_LOGGING" = true ]; then
+            args+=(--debug)
+          fi
+          if ../../bin/find-candidates "${args[@]}" > stdout.txt 2> stderr.txt; then
             code=0
           else
             code=$?
           fi
           printf '%s\n' "$code" > exit-code.txt
+          if [ "$DEBUG_LOGGING" = true ]; then
+            if read -r debug_marker < /proc/sys/kernel/random/uuid && [ -n "$debug_marker" ]; then
+              printf '::stop-commands::%s\n' "$debug_marker"
+              cat stderr.txt || printf 'Could not display diagnostics; check the artifact.\n'
+              printf '\n::%s::\n' "$debug_marker"
+            else
+              printf 'Could not safely display diagnostics; check stderr.txt in the artifact.\n'
+            fi
+          fi
 
       - name: Summarize candidate search
         id: summary
         if: always() && (steps.discover.outcome == 'success' || steps.discover.outcome == 'failure')
         shell: bash
+        env:
+          DEBUG_LOGGING: ${{ inputs.debug }}
         run: |
           printf '## Candidate search\n\n' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DEBUG_LOGGING" = true ]; then
+            printf 'Debug logging enabled. See the Find candidates step log and stderr.txt in the candidate-search artifact for bounded HTTP diagnostics.\n\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
           code=$(cat out/candidate-search/exit-code.txt 2>/dev/null) || code=''
           case "$code" in
             0|2) ;;

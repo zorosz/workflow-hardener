@@ -9,7 +9,7 @@ Copy each query as one line. GitHub supports `content:`, regular expressions, an
 The separate Go executable at [`cmd/find-candidates`](../cmd/find-candidates/main.go) automates a small sample of the search, download, and regex-filtering procedure. It writes `candidates.json` for later review or bulk scanning. It does not run the scanner or change its two rules.
 
 1. Open [Actions → Find candidates](https://github.com/zorosz/workflow-hardener/actions/workflows/find-candidates.yml).
-2. Choose **Run workflow**, select `main`, then click **Run workflow**. No custom inputs are required.
+2. Choose **Run workflow**, select `main`, optionally enable **Debug logging**, then click **Run workflow**. Debug logging defaults to off.
 3. Open the run summary to review the candidate count, completed queries, filtered files, and **Limits and errors**.
 4. Download the **candidate-search** artifact from the run page. It contains `candidates.json`, `stdout.txt`, `stderr.txt`, and the actual process result in `exit-code.txt`, retained for seven days.
 
@@ -19,7 +19,7 @@ The [manual workflow](../.github/workflows/find-candidates.yml) builds the execu
 
 Discovery runs in a fresh `out/candidate-search` directory. Its process exit code is captured so summary generation and artifact upload happen before the final job result. The summary validates the report against that code, shows at most 20 issues with text shortened to 512 characters and HTML-escaped, and points to the full artifact. Exit 2 still uploads any report and candidates before marking the job failed. Missing or invalid reports, inconsistent exit codes, and upload failures also fail the job. Cancellation, infrastructure failures, or a failure before discovery creates output may leave no report.
 
-For command-line use, build with `go build -o bin/find-candidates ./cmd/find-candidates` (use `bin/find-candidates.exe` on Windows), then run the executable in an empty output directory with `GH_TOKEN` provided in its environment. It takes no arguments other than `--help`/`-h` and creates `candidates.json` in the current directory, refusing to overwrite an existing file. The built-in Actions token is supplied during a workflow job; it is not automatically available in a local terminal.
+For command-line use, build with `go build -o bin/find-candidates ./cmd/find-candidates` (use `bin/find-candidates.exe` on Windows), then run the executable in an empty output directory with `GH_TOKEN` provided in its environment. It accepts `--debug` for HTTP diagnostics, or `--help`/`-h` for usage, and creates `candidates.json` in the current directory, refusing to overwrite an existing file. The built-in Actions token is supplied during a workflow job; it is not automatically available in a local terminal.
 
 The manual workflow runs only when requested. Regular CI builds the executable and runs offline tests without credentials or live searches. Automatic bulk scanning remains separate work; candidates can be passed individually to the existing repository scanner.
 
@@ -50,6 +50,18 @@ The report contains:
 Exit 0 can contain candidates: discovery does not confirm scanner findings and never uses exit 1. Even a complete discovery report is not an exhaustive search of GitHub. If output cannot be written, the process returns 2 and reports the failure on stderr; there may be no valid JSON file.
 
 The filters use the one-line and eight-line multiline layouts below, including their false positives and omissions. They do not apply the web query's fork/archive operators; REST search has its own indexing restrictions. `candidates.json` stores blob identities, not a repository commit. A later `scan --repo` resolves the current default-branch commit, which can differ from the indexed blob. Keep that scan's JSON and exit code, including exit 2, alongside the original candidate record.
+
+### Debug logging
+
+Enable the **Debug logging** checkbox before starting **Find candidates**, or pass `--debug` to the CLI. The Actions summary points to the **Find candidates** step log and the artifact's existing `stderr.txt`. CLI diagnostics go to stderr; ordinary CLI errors may also appear there. No additional API requests or retries are made, and `candidates.json` keeps the same schema and exit-code meanings.
+
+Each HTTP diagnostic is one JSON line. It records a UTC timestamp, the constructed endpoint and search query where applicable, elapsed milliseconds, HTTP status or a fixed transport-error category, and available validated metadata: GitHub's request ID, server date, and rate-limit details. On an unsuccessful HTTP response, `github_message` contains GitHub's decoded top-level JSON error message. This may identify a rejection more precisely, but it is not a guarantee that GitHub exposes the internal cause.
+
+Only error bodies are read for diagnostics, up to 8 KiB plus one byte to detect overflow. Messages are redacted before being shortened to at most 1,024 characters, with `message_truncated: true` when shortened. Missing, invalid, oversized, or unreadable message data is identified by `message_unavailable`. No raw bodies, successful search/blob contents, request headers, cookies, or environment dumps are logged. The active job token is redacted from diagnostic text, including error messages and request IDs.
+
+Debug output is limited to 64 KiB per run, including a final `debug_truncated` event when the limit is reached. A failed diagnostic write stops further logging and adds a fixed notice to stdout, preserving the discovery result. JSON encoding keeps response newlines and control characters inside their strings. The workflow temporarily disables Actions command parsing while displaying stderr, then restores it with a fresh random marker. See [GitHub's command-processing guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#stopping-and-starting-workflow-commands).
+
+With debug disabled, HTTP error bodies are not read for logging. The normal rate-limit report below remains available. No personal token or Actions debug secret is needed to enable this option.
 
 ### Rate-limit errors
 

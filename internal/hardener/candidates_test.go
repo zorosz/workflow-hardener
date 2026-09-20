@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const candidateTestToken = "synthetic-job-token"
@@ -150,7 +151,7 @@ func TestCandidateDiscoveryDeduplicationAndAttribution(t *testing.T) {
 		testPrefix + "/git/blobs/" + testOther: {status: 200, body: strings.ReplaceAll(candidateScript, candidateTitle, candidateBody)},
 	})
 	pauses := 0
-	report := findCandidates(context.Background(), candidateTestToken, client, func(context.Context) error { pauses++; return nil })
+	report := findCandidates(context.Background(), candidateTestToken, client, func(context.Context) error { pauses++; return nil }, nil)
 	if !report.Complete || report.ExitCode != 0 || len(report.Issues) != 0 || report.DownloadsAttempted != 3 || report.FilesFiltered != 3 ||
 		len(report.Candidates) != 3 || len(*requests) != 7 || pauses != 3 {
 		t.Fatalf("unexpected discovery result: %+v, requests=%v, pauses=%d", report, *requests, pauses)
@@ -179,7 +180,7 @@ func TestCandidateDiscoveryEmptyAndNoMatch(t *testing.T) {
 		client, _ := fakeCandidateClient(t, []apiReply{first, candidatePage(t), candidatePage(t), candidatePage(t)}, map[string]apiReply{
 			testPrefix + "/git/blobs/" + testBlob: {status: 200, body: "shell: bash\n  run: echo literal"},
 		})
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if !report.Complete || report.ExitCode != 0 || len(report.Candidates) != 0 || report.Candidates == nil || report.Issues == nil {
 			t.Fatalf("empty result should complete with JSON arrays: %+v", report)
 		}
@@ -205,7 +206,7 @@ func TestCandidateDiscoveryRejectsUntrustedHits(t *testing.T) {
 		hit := candidateTestHit(".github/workflows/ci.yml", testBlob)
 		change(&hit)
 		client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, hit)}, nil)
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if report.Complete || report.ExitCode != 2 || report.DownloadsAttempted != 0 || len(*requests) != 1 || len(report.Issues) != 1 || report.Issues[0].Code != "invalid_search_hit" {
 			t.Fatalf("invalid result accepted: %+v", report)
 		}
@@ -221,7 +222,7 @@ func TestCandidateDiscoveryReportsSamplingLimits(t *testing.T) {
 		client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, hits...), candidatePage(t), candidatePage(t), candidatePage(t)}, map[string]apiReply{
 			testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript},
 		})
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if report.DownloadsAttempted != 20 || report.FilesFiltered != 20 || len(*requests) != 24 || len(report.Candidates) != 20 ||
 			report.Complete != (count == 20) || (count == 21 && (report.ExitCode != 2 || len(report.Issues) != 1 || report.Issues[0].Code != "download_sample_limit")) {
 			t.Fatalf("download limit hidden or exceeded: %+v", report)
@@ -239,7 +240,7 @@ func TestCandidateDiscoveryReportsSamplingLimits(t *testing.T) {
 		client, _ := fakeCandidateClient(t, []apiReply{page, candidatePage(t), candidatePage(t), candidatePage(t)}, map[string]apiReply{
 			testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript},
 		})
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if report.Complete || report.ExitCode != 2 || len(report.Candidates) != 1 || len(report.Issues) != 1 || report.Issues[0].Code != tc.code {
 			t.Fatalf("partial search lost its candidates or limit: %+v", report)
 		}
@@ -273,7 +274,7 @@ func TestCandidateDiscoverySearchFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, requests := fakeCandidateClient(t, []apiReply{tc.reply}, nil)
-			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 			encoded, _ := json.Marshal(report)
 			if report.Complete || report.ExitCode != 2 || len(*requests) != 1 || len(report.Issues) != 1 ||
 				!strings.Contains(report.Issues[0].Message, tc.message) || strings.Contains(string(encoded), candidateTestToken) || report.Queries[0].Completed {
@@ -340,7 +341,7 @@ func TestCandidateDiscoveryRateLimitDiagnostics(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			client, requests := fakeCandidateClient(t, []apiReply{{status: tc.status, header: tc.header, body: candidateTestToken}}, nil)
-			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 			if report.Complete || report.ExitCode != 2 || len(*requests) != 1 || len(report.Issues) != 1 ||
 				len(report.Candidates) != 0 || report.DownloadsAttempted != 0 || report.FilesFiltered != 0 || len(report.Queries) != 4 {
 				t.Fatalf("rate limit did not stop discovery: %+v; requests=%v", report, *requests)
@@ -374,7 +375,7 @@ func TestCandidateDiscoveryRetainsPartialResults(t *testing.T) {
 			testPrefix + "/git/blobs/" + testBlob:  {status: 200, body: candidateScript},
 			testPrefix + "/git/blobs/" + testOther: failure,
 		})
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if report.Complete || report.ExitCode != 2 || len(report.Candidates) != 1 || report.FilesFiltered != 1 || report.DownloadsAttempted != 2 || len(*requests) != 3 ||
 			len(report.Issues) != 1 || report.Issues[0].Code != "download_failed" || report.Issues[0].Path != b.Path || report.Issues[0].BlobSHA != b.SHA {
 			t.Fatalf("partial failure hidden or downloads continued: %+v", report)
@@ -387,7 +388,7 @@ func TestCandidateDiscoveryRetainsPartialResults(t *testing.T) {
 		client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, a), failure}, map[string]apiReply{
 			testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript},
 		})
-		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 		if report.Complete || report.ExitCode != 2 || len(report.Candidates) != 1 || len(*requests) != 3 ||
 			report.DownloadsAttempted != 1 || report.FilesFiltered != 1 || len(report.Issues) != 1 ||
 			report.Issues[0].Code != "search_failed" || report.Issues[0].Query != report.Queries[1].Query ||
@@ -407,7 +408,7 @@ func TestCandidateDiscoveryExactByteLimits(t *testing.T) {
 	client, _ := fakeCandidateClient(t, []apiReply{page, candidatePage(t), candidatePage(t), candidatePage(t)}, map[string]apiReply{
 		testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript + strings.Repeat(" ", MaxFileBytes-len(candidateScript))},
 	})
-	report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+	report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 	if !report.Complete || report.ExitCode != 0 || len(report.Candidates) != 1 {
 		t.Fatalf("exact byte limit rejected: %+v", report)
 	}
@@ -421,14 +422,14 @@ func TestCandidateDiscoveryCancellationAndTransportFailures(t *testing.T) {
 		}
 		client := newGitHubClient()
 		client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New(candidateTestToken) })
-		report := findCandidates(ctx, candidateTestToken, client, noCandidatePause)
+		report := findCandidates(ctx, candidateTestToken, client, noCandidatePause, nil)
 		cancel()
 		if report.Complete || report.ExitCode != 2 || len(report.Issues) != 1 || strings.Contains(report.Issues[0].Message, candidateTestToken) {
 			t.Fatalf("network error not handled: %+v", report)
 		}
 	}
 	client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t)}, nil)
-	report := findCandidates(context.Background(), candidateTestToken, client, func(context.Context) error { return context.DeadlineExceeded })
+	report := findCandidates(context.Background(), candidateTestToken, client, func(context.Context) error { return context.DeadlineExceeded }, nil)
 	if report.ExitCode != 2 || len(*requests) != 1 || report.Issues[0].Code != "search_canceled" {
 		t.Fatalf("cancellation during pacing ignored: %+v", report)
 	}
@@ -440,7 +441,7 @@ func TestCandidateDiscoveryCancellationAndTransportFailures(t *testing.T) {
 	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: brokenBody{}, Request: r}, nil
 	})
-	report = findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+	report = findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, nil)
 	if report.ExitCode != 2 || !strings.Contains(report.Issues[0].Message, "cannot read") {
 		t.Fatalf("broken response body ignored: %+v", report)
 	}
@@ -449,7 +450,7 @@ func TestCandidateDiscoveryCancellationAndTransportFailures(t *testing.T) {
 func TestCandidateDiscoveryInvalidTokenMakesNoRequests(t *testing.T) {
 	client, requests := fakeCandidateClient(t, nil, nil)
 	for _, token := range []string{"", "bad\r\nheader", "bad token", strings.Repeat("x", 4097)} {
-		report := findCandidates(context.Background(), token, client, noCandidatePause)
+		report := findCandidates(context.Background(), token, client, noCandidatePause, nil)
 		if report.ExitCode != 2 || report.Complete || len(*requests) != 0 || report.Issues[0].Code != "invalid_token" {
 			t.Fatalf("invalid token accepted: %+v", report)
 		}
@@ -477,8 +478,8 @@ func TestCandidateCLI(t *testing.T) {
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
 			want := CandidateReport{Complete: code == 0, ExitCode: code, Candidates: []Candidate{{Repository: "owner/project"}}}
-			find := func(_ context.Context, token string) CandidateReport {
-				if token != candidateTestToken {
+			find := func(_ context.Context, token string, debug *candidateDebug) CandidateReport {
+				if token != candidateTestToken || debug != nil {
 					t.Fatal("job token not passed to discovery")
 				}
 				return want
@@ -494,7 +495,7 @@ func TestCandidateCLI(t *testing.T) {
 			if err := json.Unmarshal(data, &report); err != nil || !reflect.DeepEqual(report, want) {
 				t.Fatalf("report lost results: %s (%v)", data, err)
 			}
-			find = func(context.Context, string) CandidateReport {
+			find = func(context.Context, string, *candidateDebug) CandidateReport {
 				t.Fatal("existing file triggered discovery")
 				return CandidateReport{}
 			}
@@ -509,8 +510,8 @@ func TestCandidateCLI(t *testing.T) {
 	}
 	t.Run("arguments", func(t *testing.T) {
 		t.Chdir(t.TempDir())
-		for _, args := range [][]string{{"--help"}, {"-h"}, {"--repo", "owner/project"}, {"extra"}} {
-			find := func(context.Context, string) CandidateReport {
+		for _, args := range [][]string{{"--help"}, {"-h"}, {"--repo", "owner/project"}, {"extra"}, {"--debug", "--debug"}, {"--debug=true"}} {
+			find := func(context.Context, string, *candidateDebug) CandidateReport {
 				t.Fatal("arguments triggered discovery")
 				return CandidateReport{}
 			}
@@ -518,12 +519,317 @@ func TestCandidateCLI(t *testing.T) {
 			if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 				want = 0
 			}
-			if got := runCandidates(args, "", io.Discard, io.Discard, find); got != want {
+			var help bytes.Buffer
+			if got := runCandidates(args, "", &help, io.Discard, find); got != want {
 				t.Fatalf("arguments %v: exit %d", args, got)
+			}
+			if want == 0 && !strings.Contains(help.String(), "--debug") {
+				t.Fatal("help does not describe debug mode")
 			}
 		}
 		if _, err := os.Stat("candidates.json"); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("arguments created an output file")
 		}
 	})
+}
+
+func TestCandidateDebugCLI(t *testing.T) {
+	message := "Temporary limit: " + candidateTestToken + "\n::error::text, not a command\r\n"
+	reply := jsonReply(t, map[string]string{"message": message, "unrelated": "private-body-field"})
+	reply.status = 429
+	reply.body = strings.ReplaceAll(reply.body, "synthetic", `\u0073ynthetic`)
+	reply.header = http.Header{
+		"X-Github-Request-Id": {"ABcd:1234-5678"}, "Date": {"Sun, 20 Sep 2026 20:42:14 GMT"},
+		"X-Ratelimit-Resource": {"code_search"}, "X-Ratelimit-Limit": {"10"}, "X-Ratelimit-Remaining": {"10"},
+		"X-Ratelimit-Reset": {"1790023394"}, "Retry-After": {"4"}, "Set-Cookie": {"private-cookie"},
+	}
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var stdout, stderr bytes.Buffer
+			var args []string
+			if enabled {
+				args = []string{"--debug"}
+			}
+			client, requests := fakeCandidateClient(t, []apiReply{reply}, nil)
+			find := func(ctx context.Context, token string, debug *candidateDebug) CandidateReport {
+				if (debug != nil) != enabled {
+					t.Fatal("debug option not passed to discovery")
+				}
+				return findCandidates(ctx, token, client, noCandidatePause, debug)
+			}
+			if code := runCandidates(args, candidateTestToken, &stdout, &stderr, find); code != 2 || len(*requests) != 1 {
+				t.Fatalf("debug changed exit or request count: %d, %v", code, *requests)
+			}
+			data, err := os.ReadFile("candidates.json")
+			var report CandidateReport
+			if err != nil || json.Unmarshal(data, &report) != nil || report.ExitCode != 2 || report.Complete ||
+				len(report.Issues) != 1 || report.Issues[0].Code != "search_failed" || report.Queries[0].Completed {
+				t.Fatalf("debug changed the failure report: %s (%v)", data, err)
+			}
+			if !enabled {
+				if stderr.Len() != 0 {
+					t.Fatal("debug logging enabled by default")
+				}
+				return
+			}
+			var record candidateDebugRecord
+			if json.Unmarshal(stderr.Bytes(), &record) != nil || strings.Count(stderr.String(), "\n") != 1 {
+				t.Fatal("response text injected a log line or invalid JSON")
+			}
+			if record.Event != "http_request" || record.Status != 429 || record.ElapsedMS < 0 ||
+				record.Endpoint != "https://api.github.com/search/code" || record.Query != report.Queries[0].Query ||
+				record.RequestID != "ABcd:1234-5678" || record.ServerDate != "2026-09-20T20:42:14Z" ||
+				record.GitHubMessage != strings.ReplaceAll(message, candidateTestToken, "[REDACTED]") ||
+				record.MessageUnavailable != "" || record.MessageTruncated ||
+				!strings.Contains(record.RateLimit, "resource=code_search; limit=10; remaining=10;") ||
+				!strings.Contains(record.RateLimit, "retry_after=4 seconds") {
+				t.Fatalf("missing or incorrect debug metadata: %+v", record)
+			}
+			if _, err := time.Parse(time.RFC3339Nano, record.Timestamp); err != nil || !strings.HasSuffix(record.Timestamp, "Z") {
+				t.Fatal("debug timestamp is not UTC")
+			}
+			for _, secret := range []string{candidateTestToken, "private-cookie", "private-body-field", "Authorization", "Set-Cookie"} {
+				if strings.Contains(stderr.String(), secret) {
+					t.Fatal("diagnostic leaked sensitive or unselected data")
+				}
+			}
+		})
+	}
+}
+
+func TestCandidateDebugPreservesDiscovery(t *testing.T) {
+	a := candidateTestHit(".github/workflows/a.yml", testBlob)
+	b := candidateTestHit(".github/workflows/b.yml", testOther)
+	for _, blobFailure := range []bool{false, true} {
+		var baseline CandidateReport
+		var baselineRequests []string
+		for _, enabled := range []bool{false, true} {
+			second := apiReply{status: 200, body: "workflow-content-must-not-be-logged"}
+			if blobFailure {
+				second = apiReply{status: 403, body: `{"message":"` + candidateTestToken + `"}`, header: http.Header{
+					"X-Ratelimit-Remaining": {"0"}, "X-Github-Request-Id": {candidateTestToken},
+				}}
+			}
+			client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, a, b), candidatePage(t), candidatePage(t), candidatePage(t)}, map[string]apiReply{
+				testPrefix + "/git/blobs/" + testBlob:  {status: 200, body: candidateScript},
+				testPrefix + "/git/blobs/" + testOther: second,
+			})
+			var output bytes.Buffer
+			var debug *candidateDebug
+			if enabled {
+				debug = &candidateDebug{out: &output, token: candidateTestToken}
+			}
+			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, debug)
+			if !enabled {
+				baseline, baselineRequests = report, *requests
+				continue
+			}
+			if !reflect.DeepEqual(report, baseline) || !reflect.DeepEqual(*requests, baselineRequests) || len(report.Candidates) != 1 {
+				t.Fatalf("debug changed requests or results: %+v", report)
+			}
+			if strings.Contains(output.String(), candidateTestToken) || strings.Contains(output.String(), candidateScript) ||
+				strings.Contains(output.String(), "workflow-content-must-not-be-logged") {
+				t.Fatal("debug exposed a token or successful response body")
+			}
+			lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+			if len(lines) != len(*requests) {
+				t.Fatal("missing per-request diagnostic records")
+			}
+			for _, line := range lines {
+				var record candidateDebugRecord
+				if json.Unmarshal(line, &record) != nil || (record.Status == 200 && record.GitHubMessage != "") {
+					t.Fatal("invalid record or successful body logged")
+				}
+				if record.Status == 403 && (record.GitHubMessage != "[REDACTED]" || record.RequestID != "[REDACTED]") {
+					t.Fatal("active token was not redacted on the anonymous blob path")
+				}
+			}
+		}
+	}
+}
+
+type candidateTrackedBody struct {
+	io.Reader
+	read   int
+	closed bool
+}
+
+func (b *candidateTrackedBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.read += n
+	return n, err
+}
+
+func (b *candidateTrackedBody) Close() error { b.closed = true; return nil }
+
+func TestCandidateDebugErrorBodyBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, unavailable string
+	}{
+		{"malformed", "{" + candidateTestToken, "invalid_json"},
+		{"missing", `{}`, "missing_message"},
+		{"empty message", `{"message":""}`, "missing_message"},
+		{"wrong type", `{"message":123}`, "invalid_json"},
+		{"invalid UTF8", "{\"message\":\"\xff\"}", "invalid_json"},
+		{"oversized", strings.Repeat("x", candidateDebugBodyLimit+100), "body_too_large"},
+		{"exact limit", `{"message":"ok"}` + strings.Repeat(" ", candidateDebugBodyLimit-len(`{"message":"ok"}`)), ""},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", tc.name, enabled), func(t *testing.T) {
+				body := &candidateTrackedBody{Reader: strings.NewReader(tc.body)}
+				client := newGitHubClient()
+				client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: 429, Body: body, Request: r}, nil
+				})
+				var output bytes.Buffer
+				var debug *candidateDebug
+				if enabled {
+					debug = &candidateDebug{out: &output, token: candidateTestToken}
+				}
+				report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause, debug)
+				if report.ExitCode != 2 || report.Complete || len(report.Issues) != 1 ||
+					!strings.Contains(report.Issues[0].Message, "HTTP 429") || !body.closed || body.read > candidateDebugBodyLimit+1 {
+					t.Fatal("debug replaced the HTTP failure, leaked the body, or exceeded its read limit")
+				}
+				if !enabled {
+					if body.read != 0 || output.Len() != 0 {
+						t.Fatal("disabled mode consumed the error response")
+					}
+					return
+				}
+				var record candidateDebugRecord
+				if json.Unmarshal(output.Bytes(), &record) != nil || record.MessageUnavailable != tc.unavailable ||
+					(tc.unavailable != "" && record.GitHubMessage != "") || (tc.unavailable == "" && record.GitHubMessage != "ok") {
+					t.Fatalf("incorrect unavailable-message diagnostic: %+v", record)
+				}
+			})
+		}
+	}
+}
+
+func TestCandidateDebugRedactsBeforeTruncation(t *testing.T) {
+	d := candidateDebug{token: candidateTestToken}
+	for _, message := range []string{strings.Repeat("x", 1020) + candidateTestToken + " tail", strings.Repeat("界", 1025)} {
+		data, _ := json.Marshal(map[string]string{"message": message})
+		text, unavailable, truncated := d.message(bytes.NewReader(data))
+		if unavailable != "" || !truncated || utf8.RuneCountInString(text) != 1024 || !utf8.ValidString(text) ||
+			strings.Contains(text, "synt") || !strings.HasSuffix(text, "…") {
+			t.Fatal("message truncation exposed a token prefix or broke its character bound")
+		}
+	}
+}
+
+func TestCandidateDebugRequestIDs(t *testing.T) {
+	for _, values := range [][]string{nil, {""}, {"ok:123-ABC"}, {strings.Repeat("a", 128)},
+		{strings.Repeat("a", 129)}, {"a_b"}, {"a\nb"}, {"界"}, {"a", "b"}} {
+		want := ""
+		if len(values) == 1 && (values[0] == "ok:123-ABC" || values[0] == strings.Repeat("a", 128)) {
+			want = values[0]
+		}
+		if got := candidateRequestID(http.Header{"X-Github-Request-Id": values}); got != want {
+			t.Fatal("unsafe or ambiguous request ID accepted")
+		}
+	}
+}
+
+func TestCandidateDebugOutputBudget(t *testing.T) {
+	var output bytes.Buffer
+	d := candidateDebug{out: &output}
+	for i := 0; i < 100; i++ {
+		d.write(candidateDebugRecord{Event: "http_request", GitHubMessage: strings.Repeat("x", 1024)})
+	}
+	if output.Len() > candidateDebugLimit || !d.stopped || !strings.HasSuffix(output.String(), "{\"event\":\"debug_truncated\"}\n") {
+		t.Fatal("debug budget exceeded or truncation hidden")
+	}
+	for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'}) {
+		if !json.Valid(line) {
+			t.Fatal("output limit split a JSON record")
+		}
+	}
+	before := output.Len()
+	d.write(candidateDebugRecord{Event: "after_limit"})
+	if output.Len() != before {
+		t.Fatal("logging continued after truncation")
+	}
+}
+
+func TestCandidateDebugReadAndTransportFailures(t *testing.T) {
+	for _, transportFailure := range []bool{false, true} {
+		for _, canceled := range []bool{false, true} {
+			ctx, cancel := context.WithCancel(context.Background())
+			client := newGitHubClient()
+			body := &candidateTrackedBody{Reader: io.MultiReader(strings.NewReader(`{"message":"`+candidateTestToken), brokenBody{})}
+			client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if canceled {
+					cancel()
+				}
+				if transportFailure {
+					return nil, errors.New("private transport details: " + candidateTestToken)
+				}
+				return &http.Response{StatusCode: 429, Body: body, Request: r, Header: http.Header{
+					"Date": {candidateTestToken}, "X-Github-Request-Id": {"invalid\n::error::"},
+				}}, nil
+			})
+			var output bytes.Buffer
+			debug := &candidateDebug{out: &output, token: candidateTestToken}
+			report := findCandidates(ctx, candidateTestToken, client, noCandidatePause, debug)
+			cancel()
+			var record candidateDebugRecord
+			if report.ExitCode != 2 || report.Complete || len(report.Issues) != 1 || json.Unmarshal(output.Bytes(), &record) != nil ||
+				strings.Contains(output.String(), candidateTestToken) || strings.Contains(output.String(), "private transport") ||
+				record.RequestID != "" || record.ServerDate != "" {
+				t.Fatal("debug hid the failure or exposed invalid metadata/raw errors")
+			}
+			if transportFailure {
+				want := "request_failed_or_timed_out"
+				if canceled {
+					want = "canceled_or_deadline"
+				}
+				if record.Error != want || record.Status != 0 {
+					t.Fatalf("wrong transport category: %+v", record)
+				}
+			} else if record.Status != 429 || record.MessageUnavailable != "read_failed" || record.GitHubMessage != "" ||
+				!strings.Contains(report.Issues[0].Message, "HTTP 429") || !body.closed {
+				t.Fatal("debug body-read failure replaced the HTTP error or left its body open")
+			}
+		}
+	}
+}
+
+type candidateShortWriter struct{}
+
+func (candidateShortWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
+
+func TestCandidateDebugWriterFailurePreservesReport(t *testing.T) {
+	for _, code := range []int{0, 2} {
+		for _, writer := range []io.Writer{failingWriter{}, candidateShortWriter{}} {
+			t.Run(fmt.Sprintf("%d/%T", code, writer), func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				var stdout bytes.Buffer
+				want := CandidateReport{Complete: code == 0, ExitCode: code, Candidates: []Candidate{{Repository: "owner/project"}}}
+				find := func(_ context.Context, _ string, debug *candidateDebug) CandidateReport {
+					debug.write(candidateDebugRecord{Event: "http_request", Status: 429})
+					if !debug.failed || !debug.stopped {
+						t.Fatal("debug output continued after a failed or short write")
+					}
+					written := debug.written
+					debug.write(candidateDebugRecord{Event: "after_failure"})
+					if debug.written != written {
+						t.Fatal("failed debug writer was retried")
+					}
+					return want
+				}
+				if got := runCandidates([]string{"--debug"}, candidateTestToken, &stdout, writer, find); got != code ||
+					!strings.Contains(stdout.String(), "Debug diagnostics could not be fully written") {
+					t.Fatal("debug writer failure changed the result or went unreported")
+				}
+				data, err := os.ReadFile("candidates.json")
+				var report CandidateReport
+				if err != nil || json.Unmarshal(data, &report) != nil || !reflect.DeepEqual(report, want) {
+					t.Fatal("debug writer failure lost the report")
+				}
+			})
+		}
+	}
 }
