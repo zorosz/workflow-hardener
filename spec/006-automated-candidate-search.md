@@ -56,10 +56,12 @@ First verify authentication with one bounded `GET /search/code` request for `add
 
 ## Open questions
 
-Code search requires authentication; an anonymous request returned HTTP 401 during investigation. The branch check will test the built-in Actions token. Its access to global public code search remains unverified until that check runs successfully. The final discovery runner remains to be settled after this result; no personal token or supplied-secret fallback is included.
+The built-in Actions token has demonstrated code-search access to an external public repository with `permissions: {}`. The final discovery runner remains to be settled; no personal token or supplied-secret fallback is included. The four candidate-discovery queries and their download/filtering pipeline have not yet been implemented or exercised.
 
 ## Implementation and validation results
 
-The discovery tool is not implemented. The branch authentication check is prepared; hosted execution is pending publication of the test branch. Reviewed its single API request, empty permissions, redirect behavior, time/size bounds, result validation, and output handling. Whitespace checks passed for the workflow and spec changes. A separate anonymous, read-only check confirmed that public `jquery/jquery` currently contains `addClass` in `src/attributes/classes.js`; this does not verify its search index or authenticated search access. No generated project code has been executed locally.
+The discovery tool is not implemented. Reviewed the branch authentication check's single API request, empty permissions, redirect behavior, time/size bounds, result validation, and output handling. Whitespace checks passed for the workflow and spec changes. A separate anonymous, read-only check confirmed that public `jquery/jquery` contains `addClass` in `src/attributes/classes.js`.
+
+[Check code search access passed](https://github.com/zorosz/workflow-hardener/actions/runs/35500013168) on 2026-09-20 for commit `267d47365029d4a403d72b9f39842857e6abff45` on `test/code-search-token`. Its successful result requires HTTP 200, `incomplete_results: false`, and a public `jquery/jquery` match. This confirms external public code-search access with the built-in job token and `permissions: {}` for the tested query. No checkout, supplied secrets, or target-code execution were used. Scanner tests/builds were not run for this workflow-only check, and no generated project code was executed locally.
 
 References: [REST code search](https://docs.github.com/en/rest/search/search#search-code), [API regex limitations](https://cli.github.com/manual/gh_search_code), and [the built-in Actions token](https://docs.github.com/en/actions/concepts/security/github_token).
