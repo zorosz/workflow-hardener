@@ -20,5 +20,7 @@ Read-only investigation, spec drafting and revisions, and the owner's explicitly
 - [004: Document search queries and surface manual scanning](004-search-guide-and-readme-quickstart.md)
 - [005: Add a repository-local session-review skill](005-session-review-skill.md)
 - [006: Automate candidate repository search](006-automated-candidate-search.md)
+- [007: Require documentation updates for architecture changes](007-architecture-documentation.md)
+- [008: Run candidate discovery from the GitHub web UI](008-manual-candidate-search.md)
 
 Each request's file contains its current status.

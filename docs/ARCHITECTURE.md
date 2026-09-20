@@ -110,7 +110,22 @@ The scan step captures JSON, stderr, and the process exit code. The following st
 
 Discovery processes four fixed REST queries, requesting one page of 25 items each with at least six seconds between searches. It validates each result, deduplicates repository/path/blob SHA combinations, and anonymously fetches at most 20 blobs. It reuses the existing HTTP client timeout/redirect policy, repository and SHA patterns, portable-path validation, byte limits, and JSON writer. Its authenticated search requests are separate from the scanner's anonymous HTTP path.
 
-Four case-sensitive Go regex filters cover the two documented layouts and two PR fields. Each emits at most one candidate per file/filter/field, identifying the blob and first regex match's starting line. No YAML parsing or scanner rules run during discovery. Errors and sampling omissions make the report incomplete and return exit 2 while preserving candidates; complete discovery returns 0 even when candidates exist. See the [search guide](SEARCHING.md#automated-candidate-discovery) for authentication, output details, and limitations. A live discovery workflow and the later bulk scan are not included.
+Four case-sensitive Go regex filters cover the two documented layouts and two PR fields. Each emits at most one candidate per file/filter/field, identifying the blob and first regex match's starting line. No YAML parsing or scanner rules run during discovery. Errors and sampling omissions make the report incomplete and return exit 2 while preserving candidates; complete discovery returns 0 even when candidates exist. See the [search guide](SEARCHING.md#automated-candidate-discovery) for authentication, output details, and limitations. Automatic bulk scanning remains separate work.
+
+### Manual discovery workflow
+
+[`find-candidates.yml`](../.github/workflows/find-candidates.yml) exposes **Actions → Find candidates → Run workflow** with no custom inputs. A GitHub-hosted Ubuntu job checks out the project, sets up Go, and builds the discovery executable. The built-in job token is mapped to `GH_TOKEN` only for the discovery step. The workflow reuses pinned actions and read-only permissions with checkout credentials unpersisted.
+
+```mermaid
+flowchart TD
+    MANUAL[Run workflow] --> BUILD[Check out project and build find-candidates]
+    BUILD --> SEARCH[Discover candidates and capture exit code]
+    SEARCH --> SUMMARY[Validate JSON and summarize results]
+    SUMMARY --> ARTIFACT[Upload report and diagnostics]
+    ARTIFACT --> EXIT[Apply saved exit code]
+```
+
+Discovery writes a new report under `out/candidate-search`; the wrapper saves stdout, stderr, and the process exit code alongside it. A separate step checks report structure and agreement with that code, then renders counts and up to 20 HTML-escaped issues. The upload step is attempted even if discovery or summary generation failed, and retains the **candidate-search** artifact for seven days. The final step requires successful report validation and upload before applying exit 0 or 2. Thus ordinary exit 2 preserves partial candidates and a failed job status. Build failures, cancellation, and infrastructure failures can prevent a report from being created or uploaded.
 
 ## Tests
 

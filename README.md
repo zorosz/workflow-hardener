@@ -13,6 +13,15 @@ You need [write access to this scanner repository](https://docs.github.com/en/ac
 
 Use the [GitHub search guide](docs/SEARCHING.md) to find candidate repositories. See [GitHub scan details](#github-scan-details) for reporting and artifact retention, or [Scan a public repository](#scan-a-public-repository) to run the CLI locally.
 
+### Find candidates
+
+1. Open [Actions → Find candidates](https://github.com/zorosz/workflow-hardener/actions/workflows/find-candidates.yml).
+2. Choose **Run workflow**, select `main`, and click **Run workflow**. There are no repository, query, or token fields.
+3. Open the run summary for the candidate count and **Limits and errors**.
+4. Download the **candidate-search** artifact for `candidates.json`, `stdout.txt`, `stderr.txt`, and `exit-code.txt`. It is retained for seven days.
+
+This searches a fixed sample of public workflow files using the built-in job token. Matches are provisional candidates for a later scan. Exit **0** means the sampled search completed, with or without candidates. Exit **2** marks the run failed for errors or sampling omissions; any candidates remain in the uploaded report. Read the summary before interpreting a failed run as an authentication problem. See [automated discovery details](docs/SEARCHING.md#automated-candidate-discovery) for limits and report fields.
+
 ## The problem
 
 GitHub Actions substitutes expressions before passing a `run` script to the shell. A pull-request title is user-controlled, so inserting it directly into a script can introduce shell commands. [GitHub's script injection guidance](https://docs.github.com/en/actions/concepts/security/script-injections) explains this risk.

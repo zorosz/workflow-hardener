@@ -56,7 +56,7 @@ First verify authentication with one bounded `GET /search/code` request for `add
 
 ## Open questions
 
-The built-in Actions token has demonstrated code-search access to an external public repository with `permissions: {}`. The final discovery runner remains to be settled; no personal token or supplied-secret fallback is included. The four candidate-discovery queries and their download/filtering pipeline are implemented but have not yet been exercised against live GitHub results.
+The discovery runner is defined by [spec 008](008-manual-candidate-search.md): a manual GitHub-hosted workflow using the built-in job token, with no personal token or supplied-secret fallback. The token has demonstrated external public code-search access with `permissions: {}`. The four candidate-discovery queries and their download/filtering pipeline are implemented; live launcher validation is tracked in spec 008.
 
 ## Implementation and validation results
 

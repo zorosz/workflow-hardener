@@ -1,0 +1,141 @@
+name: Find candidates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly
+
+    steps:
+      - name: Check out project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+
+      - name: Build candidate discovery
+        run: go build -o bin/find-candidates ./cmd/find-candidates
+
+      - name: Find candidates
+        id: discover
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          mkdir out/candidate-search
+          cd out/candidate-search
+          if ../../bin/find-candidates > stdout.txt 2> stderr.txt; then
+            code=0
+          else
+            code=$?
+          fi
+          printf '%s\n' "$code" > exit-code.txt
+
+      - name: Summarize candidate search
+        id: summary
+        if: always() && (steps.discover.outcome == 'success' || steps.discover.outcome == 'failure')
+        shell: bash
+        run: |
+          printf '## Candidate search\n\n' >> "$GITHUB_STEP_SUMMARY"
+          code=$(cat out/candidate-search/exit-code.txt 2>/dev/null) || code=''
+          case "$code" in
+            0|2) ;;
+            *) printf 'Discovery did not finish with a recognized exit code. Check the logs and any candidate-search artifact.\n' >> "$GITHUB_STEP_SUMMARY"; exit 2 ;;
+          esac
+          if ! jq -e -s --argjson code "$code" '
+            def natural: type == "number" and . >= 0 and . == floor;
+            length == 1 and (.[0] |
+              type == "object" and .exit_code == $code and .complete == ($code == 0) and
+              (.queries | type == "array" and length == 4) and
+              all(.queries[]; type == "object" and (.query | type == "string") and
+                (.completed | type == "boolean") and (.total_count | natural) and
+                (.returned | natural) and .returned <= 25 and .returned <= .total_count) and
+              (.downloads_attempted | natural) and .downloads_attempted <= 20 and
+              (.files_filtered | natural) and .files_filtered <= .downloads_attempted and
+              (.candidates | type == "array") and (.candidates | length) <= (.files_filtered * 4) and
+              all(.candidates[]; type == "object" and
+                (.repository | type == "string") and (.path | type == "string") and
+                (.blob_sha | type == "string" and test("^[0-9a-f]{40}$")) and
+                (.filter == "one_line" or .filter == "multiline") and
+                (.pr_field == "title" or .pr_field == "body") and
+                (.match_line | natural) and .match_line > 0) and
+              (.issues | type == "array") and
+              all(.issues[]; type == "object" and (.code | type == "string") and (.message | type == "string") and
+                (.query == null or (.query | type == "string")) and
+                (.repository == null or (.repository | type == "string")) and
+                (.path == null or (.path | type == "string"))) and
+              (if .complete then (.issues | length == 0) and all(.queries[]; .completed and .returned == .total_count) and
+                .files_filtered == .downloads_attempted
+               else (.issues | length > 0) end)
+            )
+          ' out/candidate-search/candidates.json > /dev/null 2>/dev/null; then
+            printf 'Discovery produced a missing, malformed, or inconsistent report. Check the logs and candidate-search artifact; this is not a complete search.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 2
+          fi
+          jq -r '
+            def display: tostring | (if length > 512 then .[0:512] + "…" else . end) | @html;
+            (if .complete then "Completed within the fixed search sample."
+             else "Incomplete search or error. Any candidates in the report are retained. Exit 2 can reflect sampling limits." end), "",
+            "Candidates are provisional text matches, not scanner findings or confirmed vulnerabilities.", "",
+            ("<p>Candidates: " + (.candidates | length | tostring) +
+             "; queries completed: " + ([.queries[] | select(.completed)] | length | tostring) + "/4" +
+             "; files filtered: " + (.files_filtered | tostring) +
+             "; downloads attempted: " + (.downloads_attempted | tostring) + "</p>"), "",
+            "### Limits and errors", "",
+            (if (.issues | length) == 0 then "No errors or sampling omissions were reported." else
+              "<ul>",
+              (.issues[:20][] | "<li><code>" + (.code | display) + "</code>: " + (.message | display) +
+                (if .query then " <code>" + (.query | display) + "</code>" else "" end) +
+                (if .repository then " <code>" + (.repository | display) + "</code>" else "" end) +
+                (if .path then " <code>" + (.path | display) + "</code>" else "" end) + "</li>"),
+              "</ul>" end), "",
+            "Download the candidate-search artifact for candidates.json, stdout.txt, stderr.txt, and exit-code.txt. Artifacts are retained for seven days.", "",
+            "This summary shows at most 20 issues, with long text shortened. The JSON report contains the full results. A complete search is not exhaustive coverage of GitHub."
+          ' out/candidate-search/candidates.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload candidate report
+        id: upload
+        if: always() && (steps.discover.outcome == 'success' || steps.discover.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-search
+          path: |
+            out/candidate-search/candidates.json
+            out/candidate-search/stdout.txt
+            out/candidate-search/stderr.txt
+            out/candidate-search/exit-code.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Apply discovery exit code
+        if: always() && (steps.discover.outcome == 'success' || steps.discover.outcome == 'failure')
+        shell: bash
+        env:
+          DISCOVERY_OUTCOME: ${{ steps.discover.outcome }}
+          SUMMARY_OUTCOME: ${{ steps.summary.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          if [ "$DISCOVERY_OUTCOME" != success ] || [ "$SUMMARY_OUTCOME" != success ] || [ "$UPLOAD_OUTCOME" != success ]; then
+            echo 'Discovery, candidate report validation, or upload failed.' >&2
+            exit 2
+          fi
+          code=$(cat out/candidate-search/exit-code.txt)
+          case "$code" in
+            0|2) exit "$code" ;;
+            *) echo 'Discovery failed without a recognized exit code.' >&2; exit 2 ;;
+          esac

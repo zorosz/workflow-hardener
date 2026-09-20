@@ -8,24 +8,20 @@ Copy each query as one line. GitHub supports `content:`, regular expressions, an
 
 The separate Go executable at [`cmd/find-candidates`](../cmd/find-candidates/main.go) automates a small sample of the search, download, and regex-filtering procedure. It writes `candidates.json` for later review or bulk scanning. It does not run the scanner or change its two rules.
 
-Build with `go build -o bin/find-candidates ./cmd/find-candidates` (use `bin/find-candidates.exe` on Windows). The executable takes no arguments other than `--help`/`-h`. It reads `GH_TOKEN` from its environment and creates `candidates.json` in the current directory, refusing to overwrite an existing file. Use an empty output directory for each run.
+1. Open [Actions → Find candidates](https://github.com/zorosz/workflow-hardener/actions/workflows/find-candidates.yml).
+2. Choose **Run workflow**, select `main`, then click **Run workflow**. No custom inputs are required.
+3. Open the run summary to review the candidate count, completed queries, filtered files, and **Limits and errors**.
+4. Download the **candidate-search** artifact from the run page. It contains `candidates.json`, `stdout.txt`, `stderr.txt`, and the actual process result in `exit-code.txt`, retained for seven days.
 
-The intended authentication source is the built-in GitHub Actions job token. Its external public code-search access with `permissions: {}` was confirmed by the [authentication check](https://github.com/zorosz/workflow-hardener/actions/runs/35500013168). No personal token or supplied secret is needed. In a trusted GitHub-hosted job, after checkout and Go setup, the build and discovery steps would be:
+You need repository write access to start this workflow, and its file must be present on the default branch before the launcher appears. See [GitHub's manual workflow requirements](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
 
-```yaml
-- name: Build candidate discovery
-  run: go build -o bin/find-candidates ./cmd/find-candidates
-- name: Find candidates
-  shell: bash
-  env:
-    GH_TOKEN: ${{ github.token }}
-  run: |
-    mkdir -p out/candidates
-    cd out/candidates
-    ../../bin/find-candidates
-```
+The [manual workflow](../.github/workflows/find-candidates.yml) builds the executable on a GitHub-hosted Ubuntu runner and passes the built-in job token through `GH_TOKEN` only to discovery. The job has `contents: read` for checkout, does not persist checkout credentials, and pins its actions. No personal token or supplied secret is needed. The built-in token's external public code-search access with `permissions: {}` was confirmed by the [authentication check](https://github.com/zorosz/workflow-hardener/actions/runs/35500013168).
 
-This is a usage example, not a new runnable workflow in this change. A manual discovery runner, artifact upload, and bulk scanning remain separate work. CI builds this executable and runs its offline tests without credentials or live searches. Keep checkout credentials unpersisted and action versions pinned, as in the existing CI. Checkout requires `contents: read`; discovery itself needs no additional token permissions. Only the discovery step needs `GH_TOKEN`.
+Discovery runs in a fresh `out/candidate-search` directory. Its process exit code is captured so summary generation and artifact upload happen before the final job result. The summary validates the report against that code, shows at most 20 issues with text shortened to 512 characters and HTML-escaped, and points to the full artifact. Exit 2 still uploads any report and candidates before marking the job failed. Missing or invalid reports, inconsistent exit codes, and upload failures also fail the job. Cancellation, infrastructure failures, or a failure before discovery creates output may leave no report.
+
+For command-line use, build with `go build -o bin/find-candidates ./cmd/find-candidates` (use `bin/find-candidates.exe` on Windows), then run the executable in an empty output directory with `GH_TOKEN` provided in its environment. It takes no arguments other than `--help`/`-h` and creates `candidates.json` in the current directory, refusing to overwrite an existing file. The built-in Actions token is supplied during a workflow job; it is not automatically available in a local terminal.
+
+The manual workflow runs only when requested. Regular CI builds the executable and runs offline tests without credentials or live searches. Automatic bulk scanning remains separate work; candidates can be passed individually to the existing repository scanner.
 
 The [REST API uses legacy search syntax](https://docs.github.com/en/search-github/searching-on-github/searching-code), so the executable makes four broad queries in this order:
 
