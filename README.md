@@ -22,6 +22,8 @@ Use the [GitHub search guide](docs/SEARCHING.md) to find candidate repositories.
 
 This searches a fixed sample of public workflow files using the built-in job token. Matches are provisional candidates for a later scan. Exit **0** means the sampled search completed, with or without candidates. Exit **2** marks the run failed for errors or sampling omissions; any candidates remain in the uploaded report. Read the summary before interpreting a failed run as an authentication problem. See [automated discovery details](docs/SEARCHING.md#automated-candidate-discovery) for limits and report fields.
 
+For rate-limit failures, **Limits and errors** includes the HTTP status and available allowance, UTC reset time, or retry delay. Respect the reported reset/retry time before rerunning. If neither time is available, the precise retry time is unknown. See [rate-limit guidance](docs/SEARCHING.md#rate-limit-errors); waiting does not guarantee success.
+
 ## The problem
 
 GitHub Actions substitutes expressions before passing a `run` script to the shell. A pull-request title is user-controlled, so inserting it directly into a script can introduce shell commands. [GitHub's script injection guidance](https://docs.github.com/en/actions/concepts/security/script-injections) explains this risk.

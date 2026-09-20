@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -243,7 +244,7 @@ func candidateGET(ctx context.Context, client *http.Client, path, accept string,
 	if response.StatusCode != http.StatusOK {
 		switch {
 		case response.StatusCode == 429 || (response.StatusCode == 403 && (response.Header.Get("X-RateLimit-Remaining") == "0" || response.Header.Get("Retry-After") != "")):
-			return nil, errors.New("GitHub API rate limit reached; retry later")
+			return nil, candidateRateLimitError(response.StatusCode, response.Header)
 		case response.StatusCode >= 300 && response.StatusCode < 400:
 			return nil, errors.New("GitHub redirect refused")
 		default:
@@ -258,6 +259,57 @@ func candidateGET(ctx context.Context, client *http.Client, path, accept string,
 		return nil, fmt.Errorf("GitHub response exceeds %d bytes", limit)
 	}
 	return data, nil
+}
+
+func candidateRateLimitError(status int, header http.Header) error {
+	details := []string{fmt.Sprintf("GitHub API rate limit reached (HTTP %d)", status)}
+	if values := header.Values("X-RateLimit-Resource"); len(values) > 0 {
+		resource := "unknown"
+		if len(values) == 1 {
+			switch values[0] {
+			case "core", "search", "code_search":
+				resource = values[0]
+			}
+		}
+		details = append(details, "resource="+resource)
+	}
+	for _, field := range []struct{ header, label string }{
+		{"X-RateLimit-Limit", "limit"}, {"X-RateLimit-Remaining", "remaining"},
+	} {
+		if value, ok := candidateRateLimitNumber(header, field.header, 1<<31-1); ok {
+			details = append(details, fmt.Sprintf("%s=%d", field.label, value))
+		}
+	}
+	// Bound reset timestamps to the end of year 9999 for RFC3339 output.
+	reset, hasReset := candidateRateLimitNumber(header, "X-RateLimit-Reset", 253402300799)
+	if hasReset {
+		details = append(details, "reset="+time.Unix(reset, 0).UTC().Format(time.RFC3339))
+	}
+	retry, hasRetry := candidateRateLimitNumber(header, "Retry-After", 1<<31-1)
+	if hasRetry {
+		details = append(details, fmt.Sprintf("retry_after=%d seconds", retry))
+	}
+	if hasReset || hasRetry {
+		details = append(details, "respect the reported reset/retry time before rerunning")
+	} else {
+		details = append(details, "retry time unknown")
+	}
+	return errors.New(strings.Join(details, "; "))
+}
+
+// Accept one short decimal value; never echo raw or ambiguous header text.
+func candidateRateLimitNumber(header http.Header, name string, max int64) (int64, bool) {
+	values := header.Values(name)
+	if len(values) != 1 || len(values[0]) == 0 || len(values[0]) > 12 {
+		return 0, false
+	}
+	for _, digit := range values[0] {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	value, err := strconv.ParseInt(values[0], 10, 64)
+	return value, err == nil && value <= max
 }
 
 // RunCandidates writes a new candidates.json in the current directory. Keeping

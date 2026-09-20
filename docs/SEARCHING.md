@@ -51,6 +51,25 @@ Exit 0 can contain candidates: discovery does not confirm scanner findings and n
 
 The filters use the one-line and eight-line multiline layouts below, including their false positives and omissions. They do not apply the web query's fork/archive operators; REST search has its own indexing restrictions. `candidates.json` stores blob identities, not a repository commit. A later `scan --repo` resolves the current default-branch commit, which can differ from the indexed blob. Keep that scan's JSON and exit code, including exit 2, alongside the original candidate record.
 
+### Rate-limit errors
+
+A `search_failed` rate-limit issue means a search request failed; a `download_failed` rate-limit issue identifies a failed anonymous blob download. When the first query fails, zero candidates means no files were inspected. The program stops without retrying, records exit 2, and preserves any earlier candidates and the report artifact.
+
+Rate-limit messages include the HTTP status and these details when GitHub supplies valid response headers:
+
+| Detail | Meaning |
+|---|---|
+| `resource` | The reported rate-limit resource: `core`, `search`, or `code_search`. Other supplied names appear as `unknown`. |
+| `limit`, `remaining` | GitHub's reported allowance and requests remaining in that resource's rate-limit window. |
+| `reset` | The reported reset time in UTC, formatted as an RFC3339 timestamp ending in `Z`. |
+| `retry_after` | GitHub's reported delay in seconds, measured from the response. |
+
+Respect the reported reset time and any retry delay before rerunning. These values do not guarantee the next request will succeed and the HTTP status alone does not distinguish primary from secondary limits. Code search has its own limit of 10 authenticated requests per minute, and secondary limits can also apply. See [GitHub's search limits](https://docs.github.com/en/rest/search/search#rate-limit) and [rate-limit recovery guidance](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit).
+
+If neither a valid reset time nor a retry delay is available, the message says `retry time unknown`. GitHub recommends waiting at least one minute for secondary limits without usable timing headers; this is not a confirmed reset time for an unidentified limit. Avoid repeated immediate reruns. The current report cannot recover timing headers discarded by an older executable.
+
+Diagnostics use only recognized resource names and canonical numeric/time values. Duplicate or malformed numeric headers are omitted. Numeric headers must contain 1–12 ASCII digits; counts and delays must be at most 2,147,483,647, and reset timestamps must fall between the Unix epoch and the end of year 9999. Credentials and raw response bodies are never included. The details stay in the existing issue `message` in both `candidates.json` and the Actions summary.
+
 ## Broad candidate search
 
 ```text

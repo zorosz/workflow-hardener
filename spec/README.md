@@ -22,5 +22,6 @@ Read-only investigation, spec drafting and revisions, and the owner's explicitly
 - [006: Automate candidate repository search](006-automated-candidate-search.md)
 - [007: Require documentation updates for architecture changes](007-architecture-documentation.md)
 - [008: Run candidate discovery from the GitHub web UI](008-manual-candidate-search.md)
+- [009: Make candidate-search rate limits actionable](009-candidate-rate-limit-diagnostics.md)
 
 Each request's file contains its current status.

@@ -258,7 +258,9 @@ func TestCandidateDiscoverySearchFailures(t *testing.T) {
 	}{
 		{"rate limited", apiReply{status: 429, body: candidateTestToken}, "rate limit"},
 		{"secondary rate limit", apiReply{status: 403, header: http.Header{"Retry-After": {"60"}}}, "rate limit"},
-		{"unauthorized", apiReply{status: 401, body: candidateTestToken}, "HTTP 401"},
+		{"unauthorized", apiReply{status: 401, body: candidateTestToken, header: http.Header{"Retry-After": {"60"}}}, "GitHub returned HTTP 401"},
+		{"forbidden without rate limit signal", apiReply{status: 403, header: http.Header{"X-Ratelimit-Remaining": {"10"}}}, "GitHub returned HTTP 403"},
+		{"server error with retry delay", apiReply{status: 503, header: http.Header{"Retry-After": {"60"}}}, "GitHub returned HTTP 503"},
 		{"redirect", apiReply{status: 302, header: http.Header{"Location": {"https://example.com/steal-token"}}}, "redirect"},
 		{"invalid JSON", apiReply{status: 200, body: "{" + candidateTestToken}, "invalid search metadata"},
 		{"missing fields", apiReply{status: 200, body: `{}`}, "invalid search metadata"},
@@ -281,10 +283,92 @@ func TestCandidateDiscoverySearchFailures(t *testing.T) {
 	}
 }
 
+func TestCandidateDiscoveryRateLimitDiagnostics(t *testing.T) {
+	const unknown = "; retry time unknown"
+	const advice = "; respect the reported reset/retry time before rerunning"
+	type rateLimitCase struct {
+		name   string
+		status int
+		header http.Header
+		want   string
+	}
+	cases := []rateLimitCase{
+		{"exhausted allowance", 403, http.Header{
+			"X-Ratelimit-Resource": {"code_search"}, "X-Ratelimit-Limit": {"10"},
+			"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {"1700000000"},
+		}, "; resource=code_search; limit=10; remaining=0; reset=2023-11-14T22:13:20Z" + advice},
+		{"retry delay", 403, http.Header{"Retry-After": {"60"}}, "; retry_after=60 seconds" + advice},
+		{"combined headers", 429, http.Header{
+			"X-Ratelimit-Resource": {"search"}, "X-Ratelimit-Limit": {"00010"},
+			"X-Ratelimit-Remaining": {"00007"}, "X-Ratelimit-Reset": {"1700000000"}, "Retry-After": {"0060"},
+		}, "; resource=search; limit=10; remaining=7; reset=2023-11-14T22:13:20Z; retry_after=60 seconds" + advice},
+		{"no headers", 429, nil, unknown},
+		{"zero bounds", 429, http.Header{
+			"X-Ratelimit-Resource": {"core"}, "X-Ratelimit-Limit": {"0"},
+			"X-Ratelimit-Remaining": {"0"}, "X-Ratelimit-Reset": {"0"}, "Retry-After": {"0"},
+		}, "; resource=core; limit=0; remaining=0; reset=1970-01-01T00:00:00Z; retry_after=0 seconds" + advice},
+		{"maximum bounds", 429, http.Header{
+			"X-Ratelimit-Limit": {"2147483647"}, "X-Ratelimit-Remaining": {"2147483647"},
+			"X-Ratelimit-Reset": {"253402300799"}, "Retry-After": {"2147483647"},
+		}, "; limit=2147483647; remaining=2147483647; reset=9999-12-31T23:59:59Z; retry_after=2147483647 seconds" + advice},
+		{"outside bounds", 429, http.Header{
+			"X-Ratelimit-Limit": {"2147483648"}, "X-Ratelimit-Remaining": {"2147483648"},
+			"X-Ratelimit-Reset": {"253402300800"}, "Retry-After": {"2147483648"},
+		}, unknown},
+		{"unknown resource", 429, http.Header{"X-Ratelimit-Resource": {candidateTestToken}}, "; resource=unknown" + unknown},
+		{"oversized resource", 429, http.Header{"X-Ratelimit-Resource": {strings.Repeat("x", 4096)}}, "; resource=unknown" + unknown},
+		{"duplicate resource", 429, http.Header{"X-Ratelimit-Resource": {"core", candidateTestToken}}, "; resource=unknown" + unknown},
+		{"valid reset with invalid delay", 429, http.Header{
+			"X-Ratelimit-Reset": {"1700000000"}, "Retry-After": {candidateTestToken},
+		}, "; reset=2023-11-14T22:13:20Z" + advice},
+		{"invalid reset with valid delay", 429, http.Header{
+			"X-Ratelimit-Reset": {candidateTestToken}, "Retry-After": {"60"},
+		}, "; retry_after=60 seconds" + advice},
+		{"malformed delay on forbidden response", 403, http.Header{"Retry-After": {candidateTestToken}}, unknown},
+	}
+	for _, values := range [][]string{
+		{""}, {"-1"}, {"+1"}, {"1.5"}, {"1e3"}, {"0x10"}, {" 60 "}, {"60,120"},
+		{"\u0666\u0660"}, {"60\r\n"}, {candidateTestToken}, {strings.Repeat("9", 4096)},
+		{"0000000000000"}, {"9223372036854775808"}, {"60", "120"},
+	} {
+		header := http.Header{}
+		for _, name := range []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After"} {
+			header[http.CanonicalHeaderKey(name)] = values
+		}
+		cases = append(cases, rateLimitCase{fmt.Sprintf("invalid numeric headers %d", len(cases)), 429, header, unknown})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, requests := fakeCandidateClient(t, []apiReply{{status: tc.status, header: tc.header, body: candidateTestToken}}, nil)
+			report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+			if report.Complete || report.ExitCode != 2 || len(*requests) != 1 || len(report.Issues) != 1 ||
+				len(report.Candidates) != 0 || report.DownloadsAttempted != 0 || report.FilesFiltered != 0 || len(report.Queries) != 4 {
+				t.Fatalf("rate limit did not stop discovery: %+v; requests=%v", report, *requests)
+			}
+			for _, query := range report.Queries {
+				if query.Completed {
+					t.Fatalf("failed or skipped query marked complete: %+v", query)
+				}
+			}
+			want := fmt.Sprintf("GitHub API rate limit reached (HTTP %d)", tc.status) + tc.want + "; remaining work skipped"
+			if report.Issues[0].Code != "search_failed" || report.Issues[0].Message != want || report.Issues[0].Query != report.Queries[0].Query || len(want) > 512 {
+				t.Fatalf("unexpected rate limit issue: %+v; want %q", report.Issues[0], want)
+			}
+			encoded, err := json.Marshal(report)
+			if err != nil || strings.Contains(string(encoded), candidateTestToken) {
+				t.Fatal("report encoding failed or leaked synthetic sensitive text")
+			}
+		})
+	}
+}
+
 func TestCandidateDiscoveryRetainsPartialResults(t *testing.T) {
 	a := candidateTestHit(".github/workflows/a.yml", testBlob)
 	b := candidateTestHit(".github/workflows/b.yml", testOther)
-	for _, failure := range []apiReply{{status: 500}, {status: 403, header: http.Header{"X-Ratelimit-Remaining": {"0"}}},
+	rateLimit := apiReply{status: 403, header: http.Header{
+		"X-Ratelimit-Resource": {"core"}, "X-Ratelimit-Remaining": {"0"}, "Retry-After": {"60"},
+	}}
+	for _, failure := range []apiReply{{status: 500}, rateLimit,
 		{status: 200, body: strings.Repeat("x", MaxFileBytes+1)}, {status: 302, header: http.Header{"Location": {"https://example.com/blob"}}}} {
 		client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, a, b, candidateTestHit(".github/workflows/c.yml", testCommit))}, map[string]apiReply{
 			testPrefix + "/git/blobs/" + testBlob:  {status: 200, body: candidateScript},
@@ -295,13 +379,24 @@ func TestCandidateDiscoveryRetainsPartialResults(t *testing.T) {
 			len(report.Issues) != 1 || report.Issues[0].Code != "download_failed" || report.Issues[0].Path != b.Path || report.Issues[0].BlobSHA != b.SHA {
 			t.Fatalf("partial failure hidden or downloads continued: %+v", report)
 		}
+		if failure.status == 403 && !strings.Contains(report.Issues[0].Message, "resource=core; remaining=0; retry_after=60 seconds") {
+			t.Fatalf("blob rate limit diagnostics missing: %+v", report.Issues[0])
+		}
 	}
-	client, _ := fakeCandidateClient(t, []apiReply{candidatePage(t, a), {status: 503}}, map[string]apiReply{
-		testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript},
-	})
-	report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
-	if report.ExitCode != 2 || len(report.Candidates) != 1 || report.Queries[1].Completed || !report.Queries[0].Completed {
-		t.Fatalf("later search failure lost earlier candidates: %+v", report)
+	for _, failure := range []apiReply{{status: 503}, rateLimit} {
+		client, requests := fakeCandidateClient(t, []apiReply{candidatePage(t, a), failure}, map[string]apiReply{
+			testPrefix + "/git/blobs/" + testBlob: {status: 200, body: candidateScript},
+		})
+		report := findCandidates(context.Background(), candidateTestToken, client, noCandidatePause)
+		if report.Complete || report.ExitCode != 2 || len(report.Candidates) != 1 || len(*requests) != 3 ||
+			report.DownloadsAttempted != 1 || report.FilesFiltered != 1 || len(report.Issues) != 1 ||
+			report.Issues[0].Code != "search_failed" || report.Issues[0].Query != report.Queries[1].Query ||
+			report.Queries[1].Completed || report.Queries[2].Completed || report.Queries[3].Completed || !report.Queries[0].Completed {
+			t.Fatalf("later search failure lost earlier candidates or continued requests: %+v", report)
+		}
+		if failure.status == 403 && !strings.Contains(report.Issues[0].Message, "resource=core; remaining=0; retry_after=60 seconds") {
+			t.Fatalf("later search rate limit diagnostics missing: %+v", report.Issues[0])
+		}
 	}
 }
 
